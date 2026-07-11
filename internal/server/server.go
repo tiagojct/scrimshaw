@@ -309,12 +309,21 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 			badges += ` <span class="badge star">Starred</span>`
 		}
 		if item.Shared {
-			badges += ` <span class="badge">Shared</span>`
+			badges += ` <span class="badge shared">Shared</span>`
 		}
 		if linkBroken(item) {
 			badges += ` <span class="badge broken">Broken link</span>`
 		}
-		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"> <a href="/items/%d">%s</a> <small>%s</small>%s</li>`, classes, item.ID, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author), badges)
+		meta := ""
+		if item.Author != "" {
+			meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
+		}
+		if rel := relativeTime(item.AddedAt); rel != "" {
+			meta += `<time>` + rel + `</time>`
+		}
+		meta += badges
+		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
+			classes, item.ID, item.ID, template.HTMLEscapeString(item.Title), meta)
 	}
 	b.WriteString(`</ul><div class="bulk-actions"><button name="action" value="read">Mark selected read</button><button name="action" value="archive">Archive selected</button></div></form>`)
 	if options.Page > 1 || options.Page*options.PerPage < total {
@@ -379,12 +388,18 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		}
 		b.WriteString(`<ul class="items">`)
 		for _, item := range items {
-			broken := ""
-			if linkBroken(item) {
-				broken = ` <span class="badge broken">Broken link</span>`
+			meta := ""
+			if item.Author != "" {
+				meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
 			}
-			fmt.Fprintf(&b, `<li><a href="/items/%d">%s</a> <small>%s</small>%s</li>`,
-				item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author), broken)
+			if rel := relativeTime(item.AddedAt); rel != "" {
+				meta += `<time>` + rel + `</time>`
+			}
+			if linkBroken(item) {
+				meta += ` <span class="badge broken">Broken link</span>`
+			}
+			fmt.Fprintf(&b, `<li><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
+				item.ID, template.HTMLEscapeString(item.Title), meta)
 		}
 		fmt.Fprintf(&b, `</ul><p class="note"><a href="%s">%s</a></p></section>`, href, moreLabel)
 	}
@@ -459,7 +474,7 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 		badges.WriteString(` <span class="badge star">Starred</span>`)
 	}
 	if item.Shared {
-		badges.WriteString(` <span class="badge">Shared</span>`)
+		badges.WriteString(` <span class="badge shared">Shared</span>`)
 	}
 	if item.Archived {
 		badges.WriteString(` <span class="badge">Archived</span>`)
@@ -696,7 +711,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request, _ string) {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" value="%s" autofocus></label><button>Search</button></form></div><ul class="items">`, template.HTMLEscapeString(query))
 	for _, item := range items {
-		fmt.Fprintf(&b, `<li><a href="/items/%d">%s</a> <small>%s</small></li>`, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author))
+		meta := ""
+		if item.Author != "" {
+			meta = `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
+		}
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`, item.ID, template.HTMLEscapeString(item.Title), meta)
 	}
 	b.WriteString("</ul>")
 	if len(items) == 0 && query != "" {
@@ -1286,7 +1305,7 @@ func (s *Server) asset(name, contentType string) http.HandlerFunc {
 	}
 }
 
-var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="masthead"><a class="brand" href="/">Scrimshaw</a></header>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}<main>{{.Body}}</main><script src="/app.js" defer></script></body></html>`))
+var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="topbar"><div class="bar-inner"><a class="brand" href="/">Scrimshaw</a><a class="brand-add" href="/save">Add a link</a></div></header><main class="container">{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}</main><script src="/app.js" defer></script></body></html>`))
 
 func starButtonAttr(starred bool) string {
 	if starred {
@@ -1305,13 +1324,13 @@ func linkBroken(item store.Item) bool {
 func itemKindBadges(item store.Item) string {
 	var out string
 	if item.Source == "feed" {
-		out += ` <span class="badge">Feed</span>`
+		out += ` <span class="badge feed">Feed</span>`
 	}
 	if item.ReadLater {
-		out += ` <span class="badge">Read later</span>`
+		out += ` <span class="badge later">Read later</span>`
 	}
 	if item.Bookmarked {
-		out += ` <span class="badge">Bookmarked</span>`
+		out += ` <span class="badge bookmark">Bookmarked</span>`
 	}
 	if out == "" {
 		out = ` <span class="badge">Saved</span>`
@@ -1328,6 +1347,28 @@ func shortDate(v sql.NullString) string {
 		return ""
 	}
 	return t.Format("Jan 2, 2006")
+}
+
+// relativeTime renders a compact age like "5m", "3h", "2d", or a date.
+func relativeTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return strconv.Itoa(int(d.Minutes())) + "m"
+	case d < 24*time.Hour:
+		return strconv.Itoa(int(d.Hours())) + "h"
+	case d < 7*24*time.Hour:
+		return strconv.Itoa(int(d.Hours()/24)) + "d"
+	case t.Year() == time.Now().Year():
+		return t.Format("Jan 2")
+	default:
+		return t.Format("Jan 2006")
+	}
 }
 
 func viewTab(href, label, state, current string) string {
