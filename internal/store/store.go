@@ -27,20 +27,20 @@ type Item struct {
 	FeedID                                                                       sql.NullInt64
 	PublishedAt, ReadAt, LinkCheckedAt                                           sql.NullString
 	AddedAt                                                                      time.Time
-	Starred, Archived, ReadLater, Shared                                         bool
+	Starred, Archived, ReadLater, Bookmarked, Shared                             bool
 	LinkStatus                                                                   int
 }
 
 // itemColumns is the shared projection for reading items; keep the scan in
 // scanItem aligned with this list.
-const itemColumns = `i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.read_at, i.starred, i.archived, i.read_later, i.shared, i.link_status, i.link_checked_at`
+const itemColumns = `i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.read_at, i.starred, i.archived, i.read_later, i.bookmarked, i.shared, i.link_status, i.link_checked_at`
 
 func scanItem(rows interface{ Scan(...any) error }) (Item, error) {
 	var item Item
 	var added string
 	err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName,
 		&item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt,
-		&added, &item.ReadAt, &item.Starred, &item.Archived, &item.ReadLater, &item.Shared, &item.LinkStatus, &item.LinkCheckedAt)
+		&added, &item.ReadAt, &item.Starred, &item.Archived, &item.ReadLater, &item.Bookmarked, &item.Shared, &item.LinkStatus, &item.LinkCheckedAt)
 	item.AddedAt, _ = time.Parse(time.RFC3339, added)
 	return item, err
 }
@@ -54,7 +54,7 @@ type Feed struct {
 
 type ListOptions struct {
 	Tag, State, ItemType, Sort, Source string
-	ReadLater, Shared                  string // "1", "0", or "" for no filter
+	ReadLater, Bookmarked, Shared      string // "1", "0", or "" for no filter
 	Page, PerPage                      int
 }
 
@@ -324,6 +324,9 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	if options.ReadLater == "1" || options.ReadLater == "0" {
 		where = append(where, "i.read_later="+options.ReadLater)
 	}
+	if options.Bookmarked == "1" || options.Bookmarked == "0" {
+		where = append(where, "i.bookmarked="+options.Bookmarked)
+	}
 	if options.Shared == "1" {
 		where = append(where, "i.shared=1")
 	}
@@ -408,12 +411,13 @@ func (s *Store) SetReadState(ctx context.Context, id int64, state string) error 
 	if state != "read" && state != "unread" {
 		return errors.New("invalid read state")
 	}
-	// Stamp read_at on the first transition to read; clear it when unread.
+	// Reading an item files it away: read stamps read_at and archives; unread
+	// reverses both, bringing the item back to its active list.
 	if state == "read" {
-		_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state='read', read_at=COALESCE(read_at, ?) WHERE id=?", time.Now().UTC().Format(time.RFC3339), id)
+		_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state='read', read_at=COALESCE(read_at, ?), archived=1 WHERE id=?", time.Now().UTC().Format(time.RFC3339), id)
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state='unread', read_at=NULL WHERE id=?", id)
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state='unread', read_at=NULL, archived=0 WHERE id=?", id)
 	return err
 }
 
@@ -436,7 +440,7 @@ func (s *Store) SetShared(ctx context.Context, id int64, shared bool) error {
 // verified since `before`, oldest check first, for the dead-link checker.
 func (s *Store) LinksToCheck(ctx context.Context, before time.Time, limit int) ([]Item, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i
-		WHERE i.source='manual' AND (i.link_checked_at IS NULL OR i.link_checked_at < ?)
+		WHERE (i.bookmarked=1 OR i.source='manual') AND (i.link_checked_at IS NULL OR i.link_checked_at < ?)
 		ORDER BY i.link_checked_at IS NOT NULL, i.link_checked_at LIMIT ?`,
 		before.UTC().Format(time.RFC3339), limit)
 	if err != nil {
@@ -473,8 +477,8 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 		(SELECT COUNT(*) FROM items WHERE source='feed' AND archived=0 AND read_state='unread'),
 		(SELECT COUNT(*) FROM items WHERE read_later=1 AND archived=0 AND read_state='unread'),
 		(SELECT COUNT(*) FROM items WHERE read_later=1 AND archived=0),
-		(SELECT COUNT(*) FROM items WHERE source='manual' AND read_later=0 AND archived=0),
-		(SELECT COUNT(*) FROM items WHERE source='manual' AND archived=0 AND (link_status>=400 OR link_status<0)),
+		(SELECT COUNT(*) FROM items WHERE bookmarked=1 AND archived=0),
+		(SELECT COUNT(*) FROM items WHERE bookmarked=1 AND archived=0 AND (link_status>=400 OR link_status<0)),
 		(SELECT COUNT(*) FROM highlights),
 		(SELECT COUNT(*) FROM items WHERE shared=1)`)
 	err := row.Scan(&st.UnreadFeeds, &st.ReadLaterUnread, &st.ReadLaterTotal, &st.Bookmarks, &st.BrokenLinks, &st.Highlights, &st.Shared)
@@ -483,6 +487,11 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 
 func (s *Store) SetReadLater(ctx context.Context, id int64, readLater bool) error {
 	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_later=? WHERE id=?", readLater, id)
+	return err
+}
+
+func (s *Store) SetBookmarked(ctx context.Context, id int64, bookmarked bool) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET bookmarked=? WHERE id=?", bookmarked, id)
 	return err
 }
 
@@ -592,19 +601,17 @@ func (s *Store) InsertManualItem(ctx context.Context, rawURL, title, author, sit
 	if err != nil {
 		return 0, err
 	}
-	itemType := "link"
-	readLaterFlag := 0
+	itemType, readLaterFlag, bookmarkedFlag := "link", 0, 1
 	if readLater {
-		itemType = "article"
-		readLaterFlag = 1
+		itemType, readLaterFlag, bookmarkedFlag = "article", 1, 0
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO items(url, canonical_url, content_hash, title, author, site_name, source, item_type, read_later, added_at, extracted_text)
-		VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		rawURL, canonical, contentHash(title, content), title, author, siteName, itemType, readLaterFlag, time.Now().UTC().Format(time.RFC3339), content)
+	result, err := tx.ExecContext(ctx, `INSERT INTO items(url, canonical_url, content_hash, title, author, site_name, source, item_type, read_later, bookmarked, added_at, extracted_text)
+		VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		rawURL, canonical, contentHash(title, content), title, author, siteName, itemType, readLaterFlag, bookmarkedFlag, time.Now().UTC().Format(time.RFC3339), content)
 	if err != nil {
 		tx.Rollback()
 		return 0, err

@@ -68,29 +68,32 @@ func TestBookmarksReadLaterDatesAndLinkChecks(t *testing.T) {
 		t.Fatalf("insert article: %v", err)
 	}
 
-	// Views split by read_later.
-	bookmarks, _, err := s.ListPage(ctx, ListOptions{Source: "manual", ReadLater: "0"})
+	// A link-only save is a bookmark; the bookmarks view is flag-based.
+	if item, _ := s.Item(ctx, bookmarkID); !item.Bookmarked || item.ReadLater {
+		t.Fatalf("bookmark flags wrong: %+v", item)
+	}
+	bookmarks, _, err := s.ListPage(ctx, ListOptions{Bookmarked: "1"})
 	if err != nil || len(bookmarks) != 1 || bookmarks[0].ID != bookmarkID {
 		t.Fatalf("bookmarks view = %+v err=%v", bookmarks, err)
 	}
-	later, _, err := s.ListPage(ctx, ListOptions{Source: "manual", ReadLater: "1"})
+	later, _, err := s.ListPage(ctx, ListOptions{ReadLater: "1"})
 	if err != nil || len(later) != 1 || later[0].ID != articleID {
 		t.Fatalf("read-later view = %+v err=%v", later, err)
 	}
 
-	// read_at is stamped on read and cleared on unread.
+	// Reading files an item away: read stamps read_at and archives; unread reverses both.
 	if err := s.SetReadState(ctx, articleID, "read"); err != nil {
 		t.Fatal(err)
 	}
 	item, err := s.Item(ctx, articleID)
-	if err != nil || !item.ReadAt.Valid {
-		t.Fatalf("read_at not set: item=%+v err=%v", item, err)
+	if err != nil || !item.ReadAt.Valid || !item.Archived {
+		t.Fatalf("read should stamp read_at and archive: item=%+v err=%v", item, err)
 	}
 	if err := s.SetReadState(ctx, articleID, "unread"); err != nil {
 		t.Fatal(err)
 	}
-	if item, _ = s.Item(ctx, articleID); item.ReadAt.Valid {
-		t.Fatal("read_at should be cleared when unread")
+	if item, _ = s.Item(ctx, articleID); item.ReadAt.Valid || item.Archived {
+		t.Fatal("unread should clear read_at and unarchive")
 	}
 
 	// A never-checked link is due; recording a status clears it from the queue.

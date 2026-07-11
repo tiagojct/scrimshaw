@@ -29,7 +29,7 @@ dates and a `kind` of `article` or `link`:
 {
   "id": 2, "url": "https://example.com/article", "title": "...",
   "source": "manual", "kind": "article",
-  "read_later": true, "read": true, "starred": false, "archived": false,
+  "read_later": true, "bookmarked": false, "read": true, "starred": false, "archived": false,
   "shared": false, "link_status": 200, "tags": ["reading"],
   "content": "<p>...</p>",
   "added_at": "2026-07-11T09:00:00Z",
@@ -45,7 +45,7 @@ Also read-scoped: `GET /api/feeds`, `GET /api/highlights` (each highlight has a
 
 `GET /api/shared` returns only shared items, for building a public page:
 
-- `GET /api/shared?read_later=0` — shared bookmarks (a linklog).
+- `GET /api/shared?bookmarked=1` — shared bookmarks (a linklog).
 - `GET /api/shared?read_later=1` — shared read-later articles (a reading log).
 
 ## Mark read and add highlights (write)
