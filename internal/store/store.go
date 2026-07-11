@@ -21,13 +21,13 @@ import (
 type Store struct{ DB *sql.DB }
 
 type Item struct {
-	ID                                                                   int64
-	URL, CanonicalURL, Title, Author, SiteName, ExtractedText, ReadState string
-	SnapshotPath                                                         sql.NullString
-	FeedID                                                               sql.NullInt64
-	PublishedAt                                                          sql.NullString
-	AddedAt                                                              time.Time
-	Starred, Archived                                                    bool
+	ID                                                                           int64
+	URL, CanonicalURL, Title, Author, SiteName, ExtractedText, ReadState, Source string
+	SnapshotPath                                                                 sql.NullString
+	FeedID                                                                       sql.NullInt64
+	PublishedAt                                                                  sql.NullString
+	AddedAt                                                                      time.Time
+	Starred, Archived                                                            bool
 }
 
 type Feed struct {
@@ -38,8 +38,8 @@ type Feed struct {
 }
 
 type ListOptions struct {
-	Tag, State, ItemType, Sort string
-	Page, PerPage              int
+	Tag, State, ItemType, Sort, Source string
+	Page, PerPage                      int
 }
 
 type Count struct {
@@ -303,6 +303,10 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	default:
 		where = append(where, "i.archived=0")
 	}
+	if options.Source == "feed" || options.Source == "manual" {
+		where = append(where, "i.source=?")
+		args = append(args, options.Source)
+	}
 	if options.Tag != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND t.name=? COLLATE NOCASE)`)
 		args = append(args, options.Tag)
@@ -324,7 +328,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		order = "CASE i.read_state WHEN 'unread' THEN 0 ELSE 1 END, COALESCE(i.published_at, i.added_at) DESC"
 	}
 	pageArgs := append(append([]any{}, args...), options.PerPage, (options.Page-1)*options.PerPage)
-	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.starred, i.archived
+	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.starred, i.archived
 		FROM items i WHERE `+condition+` ORDER BY `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -334,7 +338,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	for rows.Next() {
 		var item Item
 		var added string
-		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived); err != nil {
+		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived); err != nil {
 			return nil, 0, err
 		}
 		item.AddedAt, _ = time.Parse(time.RFC3339, added)
@@ -363,8 +367,8 @@ func (s *Store) UnreadTagCounts(ctx context.Context) ([]Count, error) {
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
 	var item Item
 	var added string
-	err := s.DB.QueryRowContext(ctx, `SELECT id,url,canonical_url,title,author,site_name,extracted_text,read_state,snapshot_path,feed_id,published_at,added_at,starred,archived FROM items WHERE id=?`, id).
-		Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,url,canonical_url,title,author,site_name,extracted_text,read_state,source,snapshot_path,feed_id,published_at,added_at,starred,archived FROM items WHERE id=?`, id).
+		Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived)
 	item.AddedAt, _ = time.Parse(time.RFC3339, added)
 	return item, err
 }

@@ -218,9 +218,15 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	if page < 1 {
 		page = 1
 	}
+	view := r.URL.Query().Get("view")
+	sort := r.URL.Query().Get("sort")
+	tag := r.URL.Query().Get("tag")
+	v, ok := viewsByKey[view]
+	if !ok {
+		v = viewsByKey["feeds"]
+	}
 	options := store.ListOptions{
-		Tag: r.URL.Query().Get("tag"), State: r.URL.Query().Get("state"),
-		ItemType: r.URL.Query().Get("type"), Sort: r.URL.Query().Get("sort"),
+		Tag: tag, State: v.state, Source: v.source, Sort: sort,
 		Page: page, PerPage: 50,
 	}
 	items, total, err := s.store.ListPage(r.Context(), options)
@@ -233,26 +239,40 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		s.internalError(w, err)
 		return
 	}
+
+	// Preserve the active view (and sort) across pagination and tag filters.
+	link := func(extra url.Values) string {
+		q := url.Values{"view": {v.key}}
+		if sort != "" {
+			q.Set("sort", sort)
+		}
+		for key, values := range extra {
+			q[key] = values
+		}
+		return "/?" + q.Encode()
+	}
+
 	var b strings.Builder
 	b.WriteString(`<nav class="toolbar"><a href="/feeds/new">Subscribe to a feed</a><a href="/save">Save a page</a><a href="/highlights">Highlights</a><a href="/import">Import data</a><a href="/tokens">API tokens</a><a href="/export.json">JSON export</a><a href="/export.opml">OPML export</a></nav>`)
-	b.WriteString(`<nav class="views">` +
-		viewTab("/", "Inbox", "", options.State) +
-		viewTab("/?state=unread", "Unread", "unread", options.State) +
-		viewTab("/?state=starred", "Saved", "starred", options.State) +
-		viewTab("/?state=archived", "Archived", "archived", options.State) +
-		`</nav>`)
-	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="state" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form></div>`,
-		template.HTMLEscapeString(options.State),
-		optionTag("", "Newest", options.Sort), optionTag("oldest", "Oldest", options.Sort), optionTag("unread", "Unread first", options.Sort))
-	if len(tagCounts) > 0 {
+	b.WriteString(`<nav class="views">`)
+	for _, item := range viewOrder {
+		b.WriteString(viewTab("/?view="+item.key, item.label, item.key, v.key))
+	}
+	b.WriteString(`</nav>`)
+	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form></div>`,
+		template.HTMLEscapeString(v.key),
+		optionTag("", "Newest", sort), optionTag("oldest", "Oldest", sort), optionTag("unread", "Unread first", sort))
+	if tag != "" {
+		fmt.Fprintf(&b, `<p class="tagbar">Tag: %s &middot; <a href="%s">clear</a></p>`, template.HTMLEscapeString(tag), link(nil))
+	} else if len(tagCounts) > 0 {
 		b.WriteString(`<p class="tagbar">Unread tags: `)
 		for _, count := range tagCounts {
-			fmt.Fprintf(&b, `<a href="/?tag=%s">%s (%d)</a>`, url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
+			fmt.Fprintf(&b, `<a href="/?view=all&tag=%s">%s (%d)</a>`, url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
 		}
 		b.WriteString(`</p>`)
 	}
 	if len(items) == 0 {
-		b.WriteString(`<p class="note">Nothing here yet.</p>`)
+		fmt.Fprintf(&b, `<p class="note">%s</p>`, v.empty)
 	}
 	b.WriteString(`<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><ul class="items">`)
 	for _, item := range items {
@@ -261,8 +281,15 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 			classes += " starred"
 		}
 		badges := ""
+		if v.showSource {
+			if item.Source == "manual" {
+				badges += ` <span class="badge">Read later</span>`
+			} else {
+				badges += ` <span class="badge">Feed</span>`
+			}
+		}
 		if item.Starred {
-			badges += ` <span class="badge star">Saved</span>`
+			badges += ` <span class="badge star">Starred</span>`
 		}
 		if item.Archived {
 			badges += ` <span class="badge">Archived</span>`
@@ -273,16 +300,39 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	if options.Page > 1 || options.Page*options.PerPage < total {
 		b.WriteString(`<div class="pager">`)
 		if options.Page > 1 {
-			fmt.Fprintf(&b, `<a href="/?page=%d">Previous</a>`, options.Page-1)
+			fmt.Fprintf(&b, `<a href="%s">Previous</a>`, link(url.Values{"page": {strconv.Itoa(options.Page - 1)}}))
 		}
 		if options.Page*options.PerPage < total {
-			fmt.Fprintf(&b, `<a href="/?page=%d">Next</a>`, options.Page+1)
+			fmt.Fprintf(&b, `<a href="%s">Next</a>`, link(url.Values{"page": {strconv.Itoa(options.Page + 1)}}))
 		}
 		b.WriteString(`</div>`)
 	}
 	b.WriteString(`<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><button>Log out</button></form>`)
-	s.render(w, "Items", b.String(), "")
+	s.render(w, v.label, b.String(), "")
 }
+
+// itemView describes one tab over the shared items table.
+type itemView struct {
+	key, label, source, state, empty string
+	showSource                       bool
+}
+
+var viewOrder = []itemView{
+	{key: "feeds", label: "Feeds", source: "feed", empty: "No feed items yet. Subscribe to a feed to start."},
+	{key: "later", label: "Read Later", source: "manual", empty: "Nothing saved to read yet. Use Save a page."},
+	{key: "starred", label: "Starred", state: "starred", empty: "No starred items yet.", showSource: true},
+	{key: "archived", label: "Archived", state: "archived", empty: "Nothing archived.", showSource: true},
+	{key: "all", label: "All", empty: "Nothing here yet.", showSource: true},
+}
+
+var viewsByKey = func() map[string]itemView {
+	m := make(map[string]itemView, len(viewOrder))
+	for _, v := range viewOrder {
+		m[v.key] = v
+	}
+	return m
+}()
+
 func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -322,27 +372,36 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	if item.Author != "" {
 		fmt.Fprintf(&badges, ` &middot; %s`, template.HTMLEscapeString(item.Author))
 	}
+	if item.Source == "manual" {
+		badges.WriteString(` &middot; <span class="badge">Read later</span>`)
+	} else {
+		badges.WriteString(` &middot; <span class="badge">Feed</span>`)
+	}
 	if item.Starred {
-		badges.WriteString(` &middot; <span class="badge star">Saved</span>`)
+		badges.WriteString(` <span class="badge star">Starred</span>`)
 	}
 	if item.Archived {
-		badges.WriteString(` &middot; <span class="badge">Archived</span>`)
+		badges.WriteString(` <span class="badge">Archived</span>`)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s%s</p><div class="reader">%s</div></article>`,
 		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, badges.String(), sanitize.HTML(item.ExtractedText))
-	starValue, starLabel := "1", "Save"
+	starValue, starLabel := "1", "Star"
 	if item.Starred {
-		starValue, starLabel = "0", "Saved"
+		starValue, starLabel = "0", "Starred"
 	}
 	archiveValue, archiveLabel := "1", "Archive"
 	if item.Archived {
 		archiveValue, archiveLabel = "0", "Move to inbox"
 	}
-	fmt.Fprintf(&b, `<div class="reader-actions"><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="star-form" method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="starred" value="%s"><button%s>%s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="archived" value="%s"><button>%s</button></form></div>`,
+	backURL := "/?view=feeds"
+	if item.Source == "manual" {
+		backURL = "/?view=later"
+	}
+	fmt.Fprintf(&b, `<div class="reader-actions"><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="star-form" method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="starred" value="%s"><button%s>%s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="archived" value="%s"><input type="hidden" name="return" value="%s"><button>%s</button></form></div>`,
 		item.ID, token, state, state,
 		item.ID, token, starValue, starButtonAttr(item.Starred), starLabel,
-		item.ID, token, archiveValue, archiveLabel)
+		item.ID, token, archiveValue, template.HTMLEscapeString(backURL), archiveLabel)
 	// Selection popover and the hidden form it submits to create a highlight.
 	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
 	b.WriteString(`<section class="highlight-list"><h2>Highlights</h2>`)
@@ -387,10 +446,19 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	if archived {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+// safeReturn accepts only same-origin absolute paths, guarding against open
+// redirects via an attacker-supplied return value.
+func safeReturn(dest string) string {
+	if strings.HasPrefix(dest, "/") && !strings.HasPrefix(dest, "//") {
+		return dest
+	}
+	return "/"
 }
 func (s *Server) star(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
