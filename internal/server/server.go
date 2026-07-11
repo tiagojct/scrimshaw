@@ -768,28 +768,42 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request, _ string) {
 	_, _ = w.Write(body)
 }
 func (s *Server) highlights(w http.ResponseWriter, r *http.Request, _ string) {
-	highlights, err := s.store.ListHighlights(r.Context())
+	highlights, err := s.store.ListHighlightsDetailed(r.Context())
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
 	var b strings.Builder
-	b.WriteString(`<section class="highlight-list"><h1>Highlights</h1>`)
+	b.WriteString(dashboardToolbar)
+	fmt.Fprintf(&b, `<h1>Highlights</h1><p class="subtitle">%d passage%s saved across your reading.</p>`, len(highlights), plural(len(highlights)))
 	if len(highlights) == 0 {
-		b.WriteString(`<p class="note">No highlights yet. Open an article and select text to make one.</p></section>`)
+		b.WriteString(`<p class="note">No highlights yet. Open an article and select any passage to save it.</p>`)
 		s.render(w, "Highlights", b.String(), "")
 		return
 	}
-	b.WriteString(`<ul>`)
-	for _, highlight := range highlights {
-		fmt.Fprintf(&b, `<li><q>%s</q>`, template.HTMLEscapeString(highlight.Quote))
-		if highlight.Note != "" {
-			fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(highlight.Note))
+	b.WriteString(`<div class="highlights">`)
+	for _, h := range highlights {
+		b.WriteString(`<article class="hl-card">`)
+		fmt.Fprintf(&b, `<blockquote>%s</blockquote>`, template.HTMLEscapeString(h.Quote))
+		if h.Note != "" {
+			fmt.Fprintf(&b, `<p class="hl-note">%s</p>`, template.HTMLEscapeString(h.Note))
 		}
-		fmt.Fprintf(&b, ` <a href="/items/%d">Open item</a></li>`, highlight.ItemID)
+		title := h.ItemTitle
+		if title == "" {
+			title = "Untitled"
+		}
+		fmt.Fprintf(&b, `<p class="hl-source"><a href="/items/%d">%s</a><time>%s</time></p></article>`,
+			h.ItemID, template.HTMLEscapeString(title), relativeTime(h.CreatedAt))
 	}
-	b.WriteString(`</ul></section>`)
+	b.WriteString(`</div>`)
 	s.render(w, "Highlights", b.String(), "")
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 func (s *Server) bulk(w http.ResponseWriter, r *http.Request, _ string) {
 	values := r.Form["item"]
@@ -834,9 +848,14 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, _ string) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 func saveForm(csrfToken, rawURL string) string {
-	return `<form method="post" action="/save"><input type="hidden" name="csrf_token" value="` + csrfToken +
-		`"><label>URL <input type="url" name="url" required autofocus value="` + template.HTMLEscapeString(rawURL) +
-		`"></label><label>Tags, comma-separated <input name="tags"></label><label><input type="checkbox" name="read_later" value="1" checked> Read later (fetch the article for reading). Leave unticked to just store the link.</label><button>Add</button></form>`
+	return `<div class="form-page"><h1>Add a link</h1>` +
+		`<form class="stacked" method="post" action="/save"><input type="hidden" name="csrf_token" value="` + csrfToken + `">` +
+		`<label>URL <input type="url" name="url" required autofocus placeholder="https://example.com/article" value="` + template.HTMLEscapeString(rawURL) + `"></label>` +
+		`<label>Tags <input name="tags" placeholder="comma-separated, optional"></label>` +
+		`<fieldset class="choice"><legend>How to save it</legend>` +
+		`<label class="radio"><input type="radio" name="read_later" value="1" checked><span><strong>Read later</strong><small>Fetch the full article so you can read and highlight it.</small></span></label>` +
+		`<label class="radio"><input type="radio" name="read_later" value="0"><span><strong>Bookmark</strong><small>Just store the link in your bookmarks and linklog.</small></span></label>` +
+		`</fieldset><button class="primary">Add</button></form></div>`
 }
 
 func (s *Server) newSave(w http.ResponseWriter, r *http.Request, _ string) {

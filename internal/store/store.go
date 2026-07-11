@@ -530,6 +530,34 @@ func (s *Store) ListHighlights(ctx context.Context) ([]Highlight, error) {
 	return s.scanHighlights(ctx, `SELECT id, item_id, quote, note, position, created_at FROM highlights ORDER BY created_at DESC`)
 }
 
+// HighlightDetail pairs a highlight with the title of the item it belongs to.
+type HighlightDetail struct {
+	Highlight
+	ItemTitle string
+}
+
+// ListHighlightsDetailed returns all highlights with their source item title,
+// newest first, for the annotations view.
+func (s *Store) ListHighlightsDetailed(ctx context.Context) ([]HighlightDetail, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT h.id, h.item_id, h.quote, h.note, h.position, h.created_at, i.title
+		FROM highlights h JOIN items i ON i.id = h.item_id ORDER BY h.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var details []HighlightDetail
+	for rows.Next() {
+		var d HighlightDetail
+		var created string
+		if err := rows.Scan(&d.ID, &d.ItemID, &d.Quote, &d.Note, &d.Position, &created, &d.ItemTitle); err != nil {
+			return nil, err
+		}
+		d.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		details = append(details, d)
+	}
+	return details, rows.Err()
+}
+
 // HighlightsForItem returns the highlights of a single item, oldest first.
 func (s *Store) HighlightsForItem(ctx context.Context, itemID int64) ([]Highlight, error) {
 	return s.scanHighlights(ctx, `SELECT id, item_id, quote, note, position, created_at FROM highlights WHERE item_id = ? ORDER BY created_at`, itemID)
