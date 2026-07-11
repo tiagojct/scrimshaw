@@ -55,6 +55,7 @@ type Feed struct {
 type ListOptions struct {
 	Tag, State, ItemType, Sort, Source string
 	ReadLater, Bookmarked, Shared      string // "1", "0", or "" for no filter
+	IncludeArchived                    bool   // keep archived items in the default view
 	Page, PerPage                      int
 }
 
@@ -315,7 +316,9 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		where = append(where, "i.archived=0", "i.read_state=?")
 		args = append(args, options.State)
 	default:
-		where = append(where, "i.archived=0")
+		if !options.IncludeArchived {
+			where = append(where, "i.archived=0")
+		}
 	}
 	if options.Source == "feed" || options.Source == "manual" {
 		where = append(where, "i.source=?")

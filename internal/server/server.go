@@ -240,7 +240,8 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		v = viewsByKey["feeds"]
 	}
 	options := store.ListOptions{
-		Tag: tag, State: v.state, Source: v.source, ReadLater: v.readLater, Bookmarked: v.bookmarked, Sort: sort,
+		Tag: tag, State: v.state, Source: v.source, ReadLater: v.readLater, Bookmarked: v.bookmarked,
+		IncludeArchived: v.includeArchived, Sort: sort,
 		Page: page, PerPage: 50,
 	}
 	items, total, err := s.store.ListPage(r.Context(), options)
@@ -337,7 +338,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		s.internalError(w, err)
 		return
 	}
-	bookmarks, _, err := s.store.ListPage(r.Context(), store.ListOptions{Bookmarked: "1", PerPage: 5})
+	bookmarks, _, err := s.store.ListPage(r.Context(), store.ListOptions{Bookmarked: "1", IncludeArchived: true, PerPage: 5})
 	if err != nil {
 		s.internalError(w, err)
 		return
@@ -392,13 +393,13 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 // itemView describes one tab over the shared items table.
 type itemView struct {
 	key, label, source, state, readLater, bookmarked, empty string
-	showSource                                              bool
+	showSource, includeArchived                             bool
 }
 
 var viewOrder = []itemView{
 	{key: "feeds", label: "Feeds", source: "feed", empty: "No feed items yet. Subscribe to a feed to start."},
 	{key: "later", label: "Read Later", readLater: "1", empty: "Nothing to read yet. Add a link, or send a feed item here with Read later.", showSource: true},
-	{key: "bookmarks", label: "Bookmarks", bookmarked: "1", empty: "No bookmarks yet. Add a link, or bookmark a feed item.", showSource: true},
+	{key: "bookmarks", label: "Bookmarks", bookmarked: "1", includeArchived: true, empty: "No bookmarks yet. Add a link, or bookmark a feed item.", showSource: true},
 	{key: "starred", label: "Starred", state: "starred", empty: "No starred items yet.", showSource: true},
 	{key: "archived", label: "Archived", state: "archived", empty: "Nothing archived. Reading an item files it here.", showSource: true},
 	{key: "all", label: "All", empty: "Nothing here yet.", showSource: true},
