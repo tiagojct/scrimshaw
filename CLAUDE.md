@@ -1,0 +1,107 @@
+# CLAUDE.md
+
+Guidance for working in the Scrimshaw codebase. SPEC.md is the full feature specification; read it for what to build. This file is the durable how: conventions, invariants, and the rules that must not be broken. Keep it short and current.
+
+## What this is
+
+Scrimshaw is a single-user, self-hosted Go application that unifies an RSS reader, a bookmarks archive, and a read-it-later reader into one SQLite datastore and one server-rendered interface. All three functions are equal citizens.
+
+## Core principles
+
+- One datastore. A feed entry, a bookmark, and a saved article are the same object: a URL with fetched content. They share the items table, tags, states, and search. Do not split them into separate tables or separate code paths.
+- Server-rendered, no SPA. HTML comes from Go html/template. Interactivity is HTMX plus small vanilla JavaScript. There is no bundler, no npm, no build step for the frontend.
+- Single static binary. The app must compile to one binary and run with only a data directory. Any dependency on an external process or system binary is out of scope for v1.
+- Data portability is a feature, not an afterthought. Everything a user creates must be exportable in an open format, and snapshots stay as readable HTML files on disk.
+
+## Technology
+
+- Go, single static binary. SQLite via modernc.org/sqlite (pure Go, CGO_ENABLED=0; keep it CGO-free).
+- SQLite with FTS5, WAL mode. Snapshots as single-file HTML on disk (internal/reader Saver); paths stored in SQLite.
+- mmcdole/gofeed for feed parsing.
+- go-shiori/go-readability for extraction.
+- microcosm-cc/bluemonday for HTML sanitization.
+- Plain CSS for theming. CSS and the small keyboard-nav JS are inlined in the page template, not served as separate assets.
+
+## Repository
+
+Module path: github.com/tiagojct/scrimshaw. The repository root is the scrimshaw folder, and all paths below are relative to it.
+
+## Layout
+
+```
+cmd/scrimshaw/      main, entrypoint, config loading; starts feed scheduler goroutine
+internal/
+  server/           routing, handlers, middleware, templates (auth, csrf, sessions)
+  store/            sqlite access, migration runner, session/token storage
+  feeds/            polling scheduler, dedup, failure lifecycle
+  fetch/            safe http client, SSRF guard, readability
+  sanitize/         bluemonday policy
+  reader/           reader view assembly, snapshot saver
+  export/           markdown, opml, json
+  importers/        opml, instapaper, linkding, readeck, netscape
+migrations/         ordered, versioned sql, embedded via go:embed
+web/                pwa manifest, service worker (embedded)
+extension/          browser extension (Manifest V3, unpacked)
+```
+
+## Architecture pointers
+
+- Routing: std-lib http.ServeMux with Go 1.22 method+pattern syntax in `Routes()` (internal/server/server.go). No router dependency.
+- HTML: one root `pageTemplate` shell in internal/server/server.go with inline CSS and JS; page bodies are built as escaped strings and injected as template.HTML. There is no templates/ or static/ directory.
+- Auth/CSRF: `withSession` middleware in internal/server wraps authenticated routes; CSRF checked on non-GET with constant-time compare. `/api/*` routes use bearer tokens instead.
+- Migrations: SQL files in migrations/ embedded with go:embed; `store.Open` applies unapplied versions in a transaction on startup.
+- Feed polling: internal/feeds Service; main starts `Run(ctx, time.Minute)` as a goroutine, which polls due feeds with conditional GET (ETag/Last-Modified) and disables a feed after 5 consecutive failures.
+- Tests live beside sources as `_test.go` in each package. No Makefile, no linter config; the commands below are the whole toolchain.
+
+## Commands
+
+```sh
+go build -o scrimshaw ./cmd/scrimshaw   # build
+go run ./cmd/scrimshaw                   # run locally
+go test ./...                            # test
+docker compose up -d                     # run via docker
+```
+
+Migrations run automatically on startup. They are ordered, versioned, and embedded; never edit a migration that has shipped, add a new one.
+
+## Hard rules, do not break
+
+- Never ship a default password. First run creates the admin account.
+- Never render fetched third-party HTML without sanitizing it first. Every saved page is a stored-XSS vector.
+- Never fetch a user- or feed-supplied URL without the SSRF guard, a timeout, a redirect cap, and a max response size.
+- Never store the database or snapshots on a network filesystem. Local disk only.
+- Never back up the database by copying the file while the app runs. Use the online backup or VACUUM INTO.
+- Never introduce a frontend build step, an SPA framework, or an npm dependency.
+- Never add a dependency on an external system binary in v1. YouTube and PDF support are deferred precisely for this reason.
+- Auto-snapshot of feed items defaults to off. Do not change that default.
+
+## Data model invariants
+
+- items is the single source of truth for content. feed_id is nullable; a null feed_id means the item was saved manually.
+- Deduplicate by canonical_url and a content hash before insert.
+- The FTS5 table is kept in sync by triggers on items, covering title, extracted_text, and snapshot text. If you change those columns, update the triggers in the same migration.
+- Tags are flat and shared across all item sources. There are no folders or categories.
+
+## Security invariants
+
+- argon2id or bcrypt for passwords.
+- Server-side sessions, cookies Secure, HttpOnly, SameSite.
+- CSRF tokens on every state-changing HTMX post.
+- API tokens stored hashed, named, revocable, and scoped.
+- Login rate-limiting and lockout.
+
+## Conventions
+
+- Prefer the standard library and a small number of well-chosen dependencies over frameworks.
+- Handlers stay thin; business logic lives in the internal packages, not in templates.
+- Return meaningful errors to logs with structured logging; never leak internal detail to the client.
+- Times are stored in UTC and displayed in the configured timezone (default Europe/Lisbon).
+- Use straight quotes and plain ASCII in code, docs, and templates.
+
+## Current phase
+
+Phase 3, in progress. Phases 1 and 2 are implemented. The browser extension (extension/) and PWA (web/ manifest, service worker with offline reading cache, /share target) exist; finish and harden them. Importers, exports, and the token API from Phase 4 are already in place.
+
+## When in doubt
+
+Favor correctness, security, and data portability over adding features. If a choice trades any of those three for convenience, it is the wrong choice.

@@ -1,0 +1,21 @@
+[Unit]
+Description=Scrimshaw reader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scrimshaw
+Group=scrimshaw
+Environment=SCRIMSHAW_DATA_DIR=/var/lib/scrimshaw
+Environment=SCRIMSHAW_BASE_URL=https://scrimshaw.example.com
+ExecStart=/usr/local/bin/scrimshaw
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/scrimshaw
+
+[Install]
+WantedBy=multi-user.target
