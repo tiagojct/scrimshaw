@@ -539,21 +539,25 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	b.WriteString(`</div>`)
 	// Selection popover and the hidden form it submits to create a highlight.
 	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
-	b.WriteString(`<section class="highlight-list"><h2>Highlights</h2>`)
+	b.WriteString(`<section class="highlight-list"><h2>Highlights &amp; notes</h2>`)
 	if len(highlights) > 0 {
 		b.WriteString(`<ul>`)
 		for _, h := range highlights {
-			fmt.Fprintf(&b, `<li><q>%s</q>`, template.HTMLEscapeString(h.Quote))
-			if h.Note != "" {
-				fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(h.Note))
+			if h.Quote != "" {
+				fmt.Fprintf(&b, `<li><q>%s</q>`, template.HTMLEscapeString(h.Quote))
+				if h.Note != "" {
+					fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(h.Note))
+				}
+				b.WriteString(`</li>`)
+			} else {
+				fmt.Fprintf(&b, `<li class="note-only"><p>%s</p></li>`, template.HTMLEscapeString(h.Note))
 			}
-			b.WriteString(`</li>`)
 		}
 		b.WriteString(`</ul>`)
 	} else {
-		b.WriteString(`<p class="note">Select any passage in the article to highlight it.</p>`)
+		b.WriteString(`<p class="note">Select any passage in the article to highlight it, or add a note below.</p>`)
 	}
-	fmt.Fprintf(&b, `<details class="manual-highlight"><summary>Add a highlight manually</summary><form method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><label>Highlight <input name="quote" required></label><label>Note <input name="note"></label><button>Add highlight</button></form></details></section>`, item.ID, token)
+	fmt.Fprintf(&b, `<details class="manual-highlight"><summary>Add a note</summary><form method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="quote" value=""><label>Note <textarea name="note" rows="3" required placeholder="Your thoughts on this article"></textarea></label><button>Add note</button></form></details></section>`, item.ID, token)
 	fmt.Fprintf(&b, `<script type="application/json" id="hl-data">%s</script>`, quotesJSON)
 	s.render(w, item.Title, b.String(), "")
 }
@@ -670,7 +674,7 @@ func (s *Server) highlight(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	if err := s.store.AddHighlight(r.Context(), id, r.FormValue("quote"), r.FormValue("note"), 0); err != nil {
-		s.render(w, "Highlight", "", "A highlight needs text.")
+		s.render(w, "Highlight", "", "A note needs some text.")
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
@@ -775,18 +779,23 @@ func (s *Server) highlights(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	var b strings.Builder
 	b.WriteString(dashboardToolbar)
-	fmt.Fprintf(&b, `<h1>Highlights</h1><p class="subtitle">%d passage%s saved across your reading.</p>`, len(highlights), plural(len(highlights)))
+	b.WriteString(`<h1>Highlights</h1><p class="subtitle">Passages and notes saved from your reading.</p>`)
 	if len(highlights) == 0 {
-		b.WriteString(`<p class="note">No highlights yet. Open an article and select any passage to save it.</p>`)
+		b.WriteString(`<p class="note">Nothing yet. Open an article, select any passage to highlight it, or add a note.</p>`)
 		s.render(w, "Highlights", b.String(), "")
 		return
 	}
 	b.WriteString(`<div class="highlights">`)
 	for _, h := range highlights {
-		b.WriteString(`<article class="hl-card">`)
-		fmt.Fprintf(&b, `<blockquote>%s</blockquote>`, template.HTMLEscapeString(h.Quote))
-		if h.Note != "" {
-			fmt.Fprintf(&b, `<p class="hl-note">%s</p>`, template.HTMLEscapeString(h.Note))
+		if h.Quote != "" {
+			b.WriteString(`<article class="hl-card">`)
+			fmt.Fprintf(&b, `<blockquote>%s</blockquote>`, template.HTMLEscapeString(h.Quote))
+			if h.Note != "" {
+				fmt.Fprintf(&b, `<p class="hl-note">%s</p>`, template.HTMLEscapeString(h.Note))
+			}
+		} else {
+			b.WriteString(`<article class="hl-card note-card">`)
+			fmt.Fprintf(&b, `<p class="hl-note-body">%s</p>`, template.HTMLEscapeString(h.Note))
 		}
 		title := h.ItemTitle
 		if title == "" {
@@ -799,12 +808,6 @@ func (s *Server) highlights(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, "Highlights", b.String(), "")
 }
 
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}
 func (s *Server) bulk(w http.ResponseWriter, r *http.Request, _ string) {
 	values := r.Form["item"]
 	ids := make([]int64, 0, len(values))

@@ -517,9 +517,11 @@ type Highlight struct {
 	CreatedAt            time.Time
 }
 
+// AddHighlight stores a highlight (a selected quote, optionally with a note) or,
+// when quote is empty, a standalone note on the item.
 func (s *Store) AddHighlight(ctx context.Context, itemID int64, quote, note string, position int64) error {
-	if strings.TrimSpace(quote) == "" {
-		return errors.New("highlight quote cannot be empty")
+	if strings.TrimSpace(quote) == "" && strings.TrimSpace(note) == "" {
+		return errors.New("a highlight needs selected text or a note")
 	}
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO highlights(item_id, quote, note, position, created_at) VALUES (?, ?, ?, ?, ?)`,
 		itemID, quote, note, position, time.Now().UTC().Format(time.RFC3339))

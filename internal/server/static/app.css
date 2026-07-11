@@ -354,6 +354,14 @@ mark.hl { background: var(--gl-mark-bg); color: inherit; padding: 0 0.1em; borde
 .highlight-list .note { color: var(--gl-text-muted); font-size: 0.95rem; margin: var(--gl-space-1) 0 0; }
 .manual-highlight { margin-top: var(--gl-space-6); }
 .manual-highlight summary { cursor: pointer; color: var(--gl-text-muted); font-size: 0.95rem; }
+.manual-highlight textarea { width: 100%; margin-top: var(--gl-space-1); resize: vertical; font-family: var(--gl-font-sans); }
+.highlight-list .note-only p {
+  margin: 0;
+  padding-left: var(--gl-space-3);
+  border-left: 3px solid var(--gl-accent);
+  color: var(--gl-text-muted);
+}
+form textarea { width: 100%; resize: vertical; font-family: var(--gl-font-sans); }
 
 /* Highlights page */
 .subtitle { color: var(--gl-text-muted); margin: 0 0 var(--gl-space-8); }
@@ -374,6 +382,13 @@ mark.hl { background: var(--gl-mark-bg); color: inherit; padding: 0 0.1em; borde
   color: var(--gl-text);
 }
 .hl-note { color: var(--gl-text-muted); margin: var(--gl-space-3) 0 0; padding-left: var(--gl-space-4); }
+.hl-card.note-card .hl-note-body {
+  margin: 0;
+  padding-left: var(--gl-space-4);
+  border-left: 3px solid var(--gl-accent);
+  color: var(--gl-text);
+  line-height: 1.6;
+}
 .hl-source {
   display: flex;
   justify-content: space-between;

@@ -112,6 +112,14 @@ func TestBookmarksReadLaterDatesAndLinkChecks(t *testing.T) {
 		t.Fatalf("after check, due = %+v err=%v", due, err)
 	}
 
+	// A note-only annotation (empty quote) is allowed; empty quote and note is not.
+	if err := s.AddHighlight(ctx, articleID, "", "a standalone note", 0); err != nil {
+		t.Fatalf("note-only highlight rejected: %v", err)
+	}
+	if err := s.AddHighlight(ctx, articleID, "  ", "  ", 0); err == nil {
+		t.Fatal("expected error for empty quote and note")
+	}
+
 	// Shared items feed the website linklog/read-articles split.
 	if err := s.SetShared(ctx, bookmarkID, true); err != nil {
 		t.Fatal(err)
