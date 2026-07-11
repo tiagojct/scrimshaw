@@ -27,7 +27,7 @@ func Linkding(ctx context.Context, input io.Reader, destination *store.Store) (i
 	}
 	var imported int
 	for _, bookmark := range bookmarks {
-		id, err := destination.InsertManualItem(ctx, bookmark.URL, bookmark.Title, "", "", bookmark.Description+"\n"+bookmark.Notes, bookmark.TagNames)
+		id, err := destination.InsertManualItem(ctx, bookmark.URL, bookmark.Title, "", "", bookmark.Description+"\n"+bookmark.Notes, bookmark.TagNames, false)
 		if err != nil {
 			continue
 		}

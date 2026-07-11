@@ -9,12 +9,13 @@ $("save").addEventListener("click", async () => {
   const origin = $("origin").value.replace(/\/$/, "");
   const token = $("token").value;
   const tags = $("tags").value.split(",").map(tag => tag.trim()).filter(Boolean);
+  const readLater = $("readlater").checked;
   if (!origin || !token) { $("status").textContent = "Enter the server URL and token."; return; }
   const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
   try {
-    const response = await fetch(origin + "/api/save", {method: "POST", headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"}, body: JSON.stringify({url: tab.url, tags})});
+    const response = await fetch(origin + "/api/save", {method: "POST", headers: {"Authorization": "Bearer " + token, "Content-Type": "application/json"}, body: JSON.stringify({url: tab.url, tags, read_later: readLater})});
     if (!response.ok) throw new Error("save failed");
     await chrome.storage.local.set({origin, token});
-    $("status").textContent = "Saved.";
+    $("status").textContent = readLater ? "Saved to read later." : "Bookmarked.";
   } catch (_) { $("status").textContent = "Could not save this page."; }
 });

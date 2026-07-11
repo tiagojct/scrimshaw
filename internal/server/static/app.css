@@ -144,8 +144,36 @@ h1 { font-size: clamp(2rem, 1.62rem + 1.72vw, 3rem); margin: 0 0 var(--gl-space-
   vertical-align: middle;
 }
 .badge.star { color: var(--gl-warn); border-color: var(--gl-warn); background: var(--gl-mark-bg); }
+.badge.broken { color: var(--gl-error); border-color: var(--gl-error); background: transparent; }
 
 .note { color: var(--gl-text-muted); }
+.meta.dates { font-size: 0.85rem; margin-top: calc(-1 * var(--gl-space-3)); }
+
+/* Dashboard */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--gl-space-3);
+  margin: var(--gl-space-6) 0 var(--gl-space-8);
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gl-space-1);
+  padding: var(--gl-space-4);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  background: var(--gl-surface);
+  text-decoration: none;
+  color: var(--gl-text);
+}
+.stat:hover { border-color: var(--gl-accent); background: var(--gl-surface-raised); }
+.stat-value { font-family: var(--gl-font-serif); font-size: 2rem; font-weight: 600; line-height: 1; color: var(--gl-accent); }
+.stat-label { font-size: 0.85rem; color: var(--gl-text-muted); }
+.dash-section { margin-bottom: var(--gl-space-8); }
+.dash-section h2 { font-size: 1.28rem; margin-bottom: var(--gl-space-2); }
+.dash-section h2 a { color: var(--gl-text); text-decoration: none; }
+.dash-section h2 a:hover { color: var(--gl-accent); }
 
 /* Form controls */
 label { display: block; margin: var(--gl-space-3) 0; font-size: 0.95rem; }

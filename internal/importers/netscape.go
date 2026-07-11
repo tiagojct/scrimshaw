@@ -23,7 +23,7 @@ func NetscapeBookmarks(ctx context.Context, input io.Reader, destination *store.
 		if node.Type == html.ElementNode && node.Data == "a" {
 			rawURL := attribute(node, "href")
 			if rawURL != "" {
-				if _, err := destination.InsertManualItem(ctx, rawURL, strings.TrimSpace(text(node)), "", "", "", tags); err == nil {
+				if _, err := destination.InsertManualItem(ctx, rawURL, strings.TrimSpace(text(node)), "", "", "", tags, false); err == nil {
 					imported++
 				}
 			}

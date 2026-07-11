@@ -73,6 +73,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items/{id}/read", s.withSession(s.setReadState))
 	mux.HandleFunc("POST /items/{id}/archive", s.withSession(s.archive))
 	mux.HandleFunc("POST /items/{id}/star", s.withSession(s.star))
+	mux.HandleFunc("POST /items/{id}/share", s.withSession(s.shareItem))
+	mux.HandleFunc("POST /items/{id}/readlater", s.withSession(s.readLaterItem))
 	mux.HandleFunc("POST /items/{id}/highlights", s.withSession(s.highlight))
 	mux.HandleFunc("POST /items/bulk", s.withSession(s.bulk))
 	mux.HandleFunc("GET /feeds/new", s.withSession(s.newFeed))
@@ -85,9 +87,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/save", s.apiSave)
 	mux.HandleFunc("OPTIONS /api/save", s.apiOptions)
 	mux.HandleFunc("GET /api/items", s.apiItems)
+	mux.HandleFunc("GET /api/shared", s.apiShared)
 	mux.HandleFunc("GET /api/feeds", s.apiFeeds)
 	mux.HandleFunc("GET /api/search", s.apiSearch)
 	mux.HandleFunc("GET /api/highlights", s.apiHighlights)
+	mux.HandleFunc("POST /api/items/{id}/read", s.apiMarkRead)
+	mux.HandleFunc("OPTIONS /api/items/{id}/read", s.apiOptions)
+	mux.HandleFunc("POST /api/items/{id}/highlights", s.apiAddHighlight)
+	mux.HandleFunc("OPTIONS /api/items/{id}/highlights", s.apiOptions)
 	mux.HandleFunc("GET /export.json", s.withSession(s.exportJSON))
 	mux.HandleFunc("GET /export.opml", s.withSession(s.exportOPML))
 	mux.HandleFunc("POST /export/markdown", s.withSession(s.exportMarkdown))
@@ -214,6 +221,11 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, session string) 
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
+	// Bare "/" is the dashboard; every list view carries an explicit ?view=.
+	if r.URL.Query().Get("view") == "" {
+		s.dashboard(w, r)
+		return
+	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -226,7 +238,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		v = viewsByKey["feeds"]
 	}
 	options := store.ListOptions{
-		Tag: tag, State: v.state, Source: v.source, Sort: sort,
+		Tag: tag, State: v.state, Source: v.source, ReadLater: v.readLater, Sort: sort,
 		Page: page, PerPage: 50,
 	}
 	items, total, err := s.store.ListPage(r.Context(), options)
@@ -253,7 +265,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 
 	var b strings.Builder
-	b.WriteString(`<nav class="toolbar"><a href="/feeds/new">Subscribe to a feed</a><a href="/save">Save a page</a><a href="/highlights">Highlights</a><a href="/import">Import data</a><a href="/tokens">API tokens</a><a href="/export.json">JSON export</a><a href="/export.opml">OPML export</a></nav>`)
+	b.WriteString(dashboardToolbar)
 	b.WriteString(`<nav class="views">`)
 	for _, item := range viewOrder {
 		b.WriteString(viewTab("/?view="+item.key, item.label, item.key, v.key))
@@ -282,17 +294,27 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		badges := ""
 		if v.showSource {
+			kind := "Feed"
 			if item.Source == "manual" {
-				badges += ` <span class="badge">Read later</span>`
-			} else {
-				badges += ` <span class="badge">Feed</span>`
+				if item.ReadLater {
+					kind = "Read later"
+				} else {
+					kind = "Bookmark"
+				}
 			}
+			badges += ` <span class="badge">` + kind + `</span>`
 		}
 		if item.Starred {
 			badges += ` <span class="badge star">Starred</span>`
 		}
+		if item.Shared {
+			badges += ` <span class="badge">Shared</span>`
+		}
 		if item.Archived {
 			badges += ` <span class="badge">Archived</span>`
+		}
+		if linkBroken(item) {
+			badges += ` <span class="badge broken">Broken link</span>`
 		}
 		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"> <a href="/items/%d">%s</a> <small>%s</small>%s</li>`, classes, item.ID, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author), badges)
 	}
@@ -311,15 +333,81 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, v.label, b.String(), "")
 }
 
+const dashboardToolbar = `<nav class="toolbar"><a href="/feeds/new">Subscribe to a feed</a><a href="/save">Add a link</a><a href="/highlights">Highlights</a><a href="/import">Import data</a><a href="/tokens">API tokens</a><a href="/export.json">JSON export</a><a href="/export.opml">OPML export</a></nav>`
+
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) {
+	st, err := s.store.Stats(r.Context())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	later, _, err := s.store.ListPage(r.Context(), store.ListOptions{Source: "manual", ReadLater: "1", State: "unread", PerPage: 5})
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	bookmarks, _, err := s.store.ListPage(r.Context(), store.ListOptions{Source: "manual", ReadLater: "0", PerPage: 5})
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	feedItems, _, err := s.store.ListPage(r.Context(), store.ListOptions{Source: "feed", State: "unread", PerPage: 5})
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString(dashboardToolbar)
+	b.WriteString(`<h1>Dashboard</h1><div class="stat-grid">`)
+	stat := func(href string, value int, label string) {
+		fmt.Fprintf(&b, `<a class="stat" href="%s"><span class="stat-value">%d</span><span class="stat-label">%s</span></a>`, href, value, label)
+	}
+	stat("/?view=feeds&sort=unread", st.UnreadFeeds, "Unread in feeds")
+	stat("/?view=later", st.ReadLaterUnread, "To read")
+	stat("/?view=bookmarks", st.Bookmarks, "Bookmarks")
+	stat("/?view=starred", st.Shared, "Shared")
+	stat("/highlights", st.Highlights, "Highlights")
+	if st.BrokenLinks > 0 {
+		stat("/?view=bookmarks", st.BrokenLinks, "Broken links")
+	}
+	b.WriteString(`</div>`)
+
+	section := func(title, href, moreLabel string, items []store.Item) {
+		fmt.Fprintf(&b, `<section class="dash-section"><h2><a href="%s">%s</a></h2>`, href, title)
+		if len(items) == 0 {
+			b.WriteString(`<p class="note">Nothing here yet.</p></section>`)
+			return
+		}
+		b.WriteString(`<ul class="items">`)
+		for _, item := range items {
+			broken := ""
+			if linkBroken(item) {
+				broken = ` <span class="badge broken">Broken link</span>`
+			}
+			fmt.Fprintf(&b, `<li><a href="/items/%d">%s</a> <small>%s</small>%s</li>`,
+				item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author), broken)
+		}
+		fmt.Fprintf(&b, `</ul><p class="note"><a href="%s">%s</a></p></section>`, href, moreLabel)
+	}
+	section("To read", "/?view=later", "All read-later", later)
+	section("Recent bookmarks", "/?view=bookmarks", "All bookmarks", bookmarks)
+	section("Unread in feeds", "/?view=feeds&sort=unread", "All feeds", feedItems)
+
+	b.WriteString(`<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><button>Log out</button></form>`)
+	s.render(w, "Dashboard", b.String(), "")
+}
+
 // itemView describes one tab over the shared items table.
 type itemView struct {
-	key, label, source, state, empty string
-	showSource                       bool
+	key, label, source, state, readLater, empty string
+	showSource                                  bool
 }
 
 var viewOrder = []itemView{
 	{key: "feeds", label: "Feeds", source: "feed", empty: "No feed items yet. Subscribe to a feed to start."},
-	{key: "later", label: "Read Later", source: "manual", empty: "Nothing saved to read yet. Use Save a page."},
+	{key: "later", label: "Read Later", source: "manual", readLater: "1", empty: "Nothing to read yet. Add a link with Read later ticked."},
+	{key: "bookmarks", label: "Bookmarks", source: "manual", readLater: "0", empty: "No bookmarks yet. Add a link to build your linklog."},
 	{key: "starred", label: "Starred", state: "starred", empty: "No starred items yet.", showSource: true},
 	{key: "archived", label: "Archived", state: "archived", empty: "Nothing archived.", showSource: true},
 	{key: "all", label: "All", empty: "Nothing here yet.", showSource: true},
@@ -368,27 +456,57 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	quotesJSON, _ := json.Marshal(quotes)
 
+	kind := "Feed"
+	if item.Source == "manual" {
+		if item.ReadLater {
+			kind = "Read later"
+		} else {
+			kind = "Bookmark"
+		}
+	}
 	var badges strings.Builder
 	if item.Author != "" {
 		fmt.Fprintf(&badges, ` &middot; %s`, template.HTMLEscapeString(item.Author))
 	}
-	if item.Source == "manual" {
-		badges.WriteString(` &middot; <span class="badge">Read later</span>`)
-	} else {
-		badges.WriteString(` &middot; <span class="badge">Feed</span>`)
-	}
+	fmt.Fprintf(&badges, ` &middot; <span class="badge">%s</span>`, kind)
 	if item.Starred {
 		badges.WriteString(` <span class="badge star">Starred</span>`)
+	}
+	if item.Shared {
+		badges.WriteString(` <span class="badge">Shared</span>`)
 	}
 	if item.Archived {
 		badges.WriteString(` <span class="badge">Archived</span>`)
 	}
+	if linkBroken(item) {
+		badges.WriteString(` <span class="badge broken">Broken link</span>`)
+	}
+
+	var dates strings.Builder
+	fmt.Fprintf(&dates, `Added %s`, item.AddedAt.Format("Jan 2, 2006"))
+	if d := shortDate(item.PublishedAt); d != "" {
+		fmt.Fprintf(&dates, ` &middot; Published %s`, d)
+	}
+	if d := shortDate(item.ReadAt); d != "" {
+		fmt.Fprintf(&dates, ` &middot; Read %s`, d)
+	}
+
+	content := fmt.Sprintf(`<div class="reader">%s</div>`, sanitize.HTML(item.ExtractedText))
+	if item.ExtractedText == "" {
+		content = fmt.Sprintf(`<div class="reader"><p class="note">This is a stored link. Use Read later below to fetch the article for reading.</p><p><a href="%s" rel="noopener noreferrer">%s</a></p></div>`,
+			template.HTMLEscapeString(item.URL), template.HTMLEscapeString(item.URL))
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s%s</p><div class="reader">%s</div></article>`,
-		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, badges.String(), sanitize.HTML(item.ExtractedText))
+	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s%s</p><p class="meta dates">%s</p>%s</article>`,
+		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, badges.String(), dates.String(), content)
+
 	starValue, starLabel := "1", "Star"
 	if item.Starred {
 		starValue, starLabel = "0", "Starred"
+	}
+	shareValue, shareLabel := "1", "Share"
+	if item.Shared {
+		shareValue, shareLabel = "0", "Shared"
 	}
 	archiveValue, archiveLabel := "1", "Archive"
 	if item.Archived {
@@ -396,12 +514,25 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	backURL := "/?view=feeds"
 	if item.Source == "manual" {
-		backURL = "/?view=later"
+		if item.ReadLater {
+			backURL = "/?view=later"
+		} else {
+			backURL = "/?view=bookmarks"
+		}
 	}
-	fmt.Fprintf(&b, `<div class="reader-actions"><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="star-form" method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="starred" value="%s"><button%s>%s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="archived" value="%s"><input type="hidden" name="return" value="%s"><button>%s</button></form></div>`,
-		item.ID, token, state, state,
-		item.ID, token, starValue, starButtonAttr(item.Starred), starLabel,
-		item.ID, token, archiveValue, template.HTMLEscapeString(backURL), archiveLabel)
+	b.WriteString(`<div class="reader-actions">`)
+	fmt.Fprintf(&b, `<form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form>`, item.ID, token, state, state)
+	fmt.Fprintf(&b, `<form class="star-form" method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="starred" value="%s"><button%s>%s</button></form>`, item.ID, token, starValue, starButtonAttr(item.Starred), starLabel)
+	fmt.Fprintf(&b, `<form method="post" action="/items/%d/share"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="shared" value="%s"><button%s>%s</button></form>`, item.ID, token, shareValue, starButtonAttr(item.Shared), shareLabel)
+	if item.Source == "manual" {
+		laterValue, laterLabel := "1", "Read later"
+		if item.ReadLater {
+			laterValue, laterLabel = "0", "Make bookmark"
+		}
+		fmt.Fprintf(&b, `<form method="post" action="/items/%d/readlater"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="read_later" value="%s"><button>%s</button></form>`, item.ID, token, laterValue, laterLabel)
+	}
+	fmt.Fprintf(&b, `<form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="archived" value="%s"><input type="hidden" name="return" value="%s"><button>%s</button></form>`, item.ID, token, archiveValue, template.HTMLEscapeString(backURL), archiveLabel)
+	b.WriteString(`</div>`)
 	// Selection popover and the hidden form it submits to create a highlight.
 	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
 	b.WriteString(`<section class="highlight-list"><h2>Highlights</h2>`)
@@ -469,6 +600,42 @@ func (s *Server) star(w http.ResponseWriter, r *http.Request, _ string) {
 	if err := s.store.SetStarred(r.Context(), id, r.FormValue("starred") != "0"); err != nil {
 		s.internalError(w, err)
 		return
+	}
+	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+func (s *Server) shareItem(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.SetShared(r.Context(), id, r.FormValue("shared") != "0"); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+// readLaterItem promotes a stored link to Read Later (fetching the article if it
+// has none yet) or demotes a read-later item back to a bookmark.
+func (s *Server) readLaterItem(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	readLater := r.FormValue("read_later") != "0"
+	if err := s.store.SetReadLater(r.Context(), id, readLater); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if readLater && s.cfg.Saver != nil {
+		item, err := s.store.Item(r.Context(), id)
+		if err == nil && item.ExtractedText == "" {
+			if err := s.cfg.Saver.Extract(r.Context(), id, item.URL); err != nil {
+				s.log.Warn("promote to read later: extract failed", "item", id, "error", err)
+			}
+		}
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
@@ -625,20 +792,26 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
+func saveForm(csrfToken, rawURL string) string {
+	return `<form method="post" action="/save"><input type="hidden" name="csrf_token" value="` + csrfToken +
+		`"><label>URL <input type="url" name="url" required autofocus value="` + template.HTMLEscapeString(rawURL) +
+		`"></label><label>Tags, comma-separated <input name="tags"></label><label><input type="checkbox" name="read_later" value="1" checked> Read later (fetch the article for reading). Leave unticked to just store the link.</label><button>Add</button></form>`
+}
+
 func (s *Server) newSave(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "Save page", `<form method="post" action="/save"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Page URL <input type="url" name="url" required autofocus></label><label>Tags, comma-separated <input name="tags"></label><button>Save and archive</button></form>`, "")
+	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), ""), "")
 }
 func (s *Server) share(w http.ResponseWriter, r *http.Request, _ string) {
 	rawURL := r.URL.Query().Get("url")
 	if err := fetch.ValidateURL(rawURL); err != nil {
-		s.render(w, "Save page", "", "The shared URL is invalid.")
+		s.render(w, "Add a link", "", "The shared URL is invalid.")
 		return
 	}
-	s.render(w, "Save page", `<form method="post" action="/save"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Page URL <input type="url" name="url" required autofocus value="`+template.HTMLEscapeString(rawURL)+`"></label><label>Tags, comma-separated <input name="tags"></label><button>Save and archive</button></form>`, "")
+	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL), "")
 }
 
 func (s *Server) tokens(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "API tokens", `<form method="post" action="/tokens"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Name <input name="name" required></label><button>Create save token</button></form>`, "")
+	s.render(w, "API tokens", `<form method="post" action="/tokens"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Name <input name="name" required></label><fieldset><legend>Scopes</legend><label><input type="checkbox" name="scope" value="read" checked> Read (retrieve items and highlights)</label><label><input type="checkbox" name="scope" value="write"> Write (save pages, mark read, add highlights)</label></fieldset><button>Create token</button></form><p class="note">Give an Obsidian plugin a read+write token; give your website a read-only token for the shared linklog.</p>`, "")
 }
 
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request, _ string) {
@@ -647,17 +820,27 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, _ string) {
 		s.render(w, "API tokens", "", "Token name is required.")
 		return
 	}
+	var scopes []string
+	for _, scope := range r.Form["scope"] {
+		if scope == "read" || scope == "write" {
+			scopes = append(scopes, scope)
+		}
+	}
+	if len(scopes) == 0 {
+		s.render(w, "API tokens", "", "Select at least one scope.")
+		return
+	}
 	token, err := randomToken(32)
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
 	sum := sha256.Sum256([]byte(token))
-	if err := s.store.CreateAPIToken(r.Context(), name, base64.RawURLEncoding.EncodeToString(sum[:])); err != nil {
+	if err := s.store.CreateAPIToken(r.Context(), name, base64.RawURLEncoding.EncodeToString(sum[:]), strings.Join(scopes, " ")); err != nil {
 		s.internalError(w, err)
 		return
 	}
-	s.render(w, "API token", `<p>Copy this token now. It will not be shown again.</p><code>`+template.HTMLEscapeString(token)+`</code>`, "")
+	s.render(w, "API token", `<p>Copy this token now. It will not be shown again. Scopes: `+template.HTMLEscapeString(strings.Join(scopes, ", "))+`</p><code>`+template.HTMLEscapeString(token)+`</code>`, "")
 }
 
 func (s *Server) apiSave(w http.ResponseWriter, r *http.Request) {
@@ -666,26 +849,26 @@ func (s *Server) apiSave(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, errors.New("manual saver is not configured"))
 		return
 	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if token == "" {
-		http.Error(w, "missing API token", http.StatusUnauthorized)
-		return
-	}
-	sum := sha256.Sum256([]byte(token))
-	valid, err := s.store.ValidAPIToken(r.Context(), base64.RawURLEncoding.EncodeToString(sum[:]))
-	if err != nil || !valid {
-		http.Error(w, "invalid API token", http.StatusUnauthorized)
+	if !s.requireScope(w, r, "write") {
 		return
 	}
 	var request struct {
-		URL  string   `json:"url"`
-		Tags []string `json:"tags"`
+		URL       string   `json:"url"`
+		Tags      []string `json:"tags"`
+		ReadLater *bool    `json:"read_later"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	id, err := s.cfg.Saver.Save(r.Context(), request.URL, request.Tags)
+	// Default to read-later; pass "read_later": false to store a link-only bookmark.
+	var id int64
+	var err error
+	if request.ReadLater != nil && !*request.ReadLater {
+		id, err = s.cfg.Saver.SaveLink(r.Context(), request.URL, request.Tags)
+	} else {
+		id, err = s.cfg.Saver.Save(r.Context(), request.URL, request.Tags)
+	}
 	if err != nil {
 		s.log.Warn("API page save failed", "error", err)
 		http.Error(w, "could not save URL", http.StatusBadRequest)
@@ -702,19 +885,40 @@ func (s *Server) apiOptions(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) apiAuthorized(r *http.Request) bool {
+func (s *Server) tokenScopes(r *http.Request) string {
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if token == "" {
-		return false
+		return ""
 	}
 	sum := sha256.Sum256([]byte(token))
-	valid, err := s.store.ValidAPIToken(r.Context(), base64.RawURLEncoding.EncodeToString(sum[:]))
-	return err == nil && valid
+	scopes, err := s.store.TokenScopes(r.Context(), base64.RawURLEncoding.EncodeToString(sum[:]))
+	if err != nil {
+		return ""
+	}
+	return scopes
+}
+
+func hasScope(scopes, want string) bool {
+	for _, sc := range strings.Fields(scopes) {
+		if sc == want || (want == "write" && sc == "save") {
+			return true
+		}
+	}
+	return false
+}
+
+// requireScope enforces a token scope on an API request, writing 401 and
+// returning false when the token lacks it.
+func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope string) bool {
+	if hasScope(s.tokenScopes(r), scope) {
+		return true
+	}
+	http.Error(w, "invalid or insufficiently scoped API token", http.StatusUnauthorized)
+	return false
 }
 
 func (s *Server) apiJSON(w http.ResponseWriter, r *http.Request, value any) {
-	if !s.apiAuthorized(r) {
-		http.Error(w, "invalid API token", http.StatusUnauthorized)
+	if !s.requireScope(w, r, "read") {
 		return
 	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -724,14 +928,97 @@ func (s *Server) apiJSON(w http.ResponseWriter, r *http.Request, value any) {
 	}
 }
 
+// apiItem is the stable JSON shape for an item, with ISO-8601 dates, consumed
+// by the Obsidian plugin and the website.
+type apiItem struct {
+	ID            int64    `json:"id"`
+	URL           string   `json:"url"`
+	Title         string   `json:"title"`
+	Author        string   `json:"author,omitempty"`
+	SiteName      string   `json:"site_name,omitempty"`
+	Source        string   `json:"source"`
+	Kind          string   `json:"kind"` // "article" or "link"
+	ReadLater     bool     `json:"read_later"`
+	Read          bool     `json:"read"`
+	Starred       bool     `json:"starred"`
+	Archived      bool     `json:"archived"`
+	Shared        bool     `json:"shared"`
+	LinkStatus    int      `json:"link_status"`
+	Tags          []string `json:"tags,omitempty"`
+	Content       string   `json:"content,omitempty"`
+	AddedAt       string   `json:"added_at"`
+	PublishedAt   string   `json:"published_at,omitempty"`
+	ReadAt        string   `json:"read_at,omitempty"`
+	LinkCheckedAt string   `json:"link_checked_at,omitempty"`
+}
+
+func ns(v sql.NullString) string {
+	if v.Valid {
+		return v.String
+	}
+	return ""
+}
+
+func toAPIItem(i store.Item, tags []string, withContent bool) apiItem {
+	kind := "article"
+	if !i.ReadLater && i.Source == "manual" {
+		kind = "link"
+	}
+	item := apiItem{
+		ID: i.ID, URL: i.URL, Title: i.Title, Author: i.Author, SiteName: i.SiteName,
+		Source: i.Source, Kind: kind, ReadLater: i.ReadLater, Read: i.ReadState == "read",
+		Starred: i.Starred, Archived: i.Archived, Shared: i.Shared, LinkStatus: i.LinkStatus,
+		Tags: tags, AddedAt: i.AddedAt.UTC().Format(time.RFC3339),
+		PublishedAt: ns(i.PublishedAt), ReadAt: ns(i.ReadAt), LinkCheckedAt: ns(i.LinkCheckedAt),
+	}
+	if withContent {
+		item.Content = i.ExtractedText
+	}
+	return item
+}
+
+func (s *Server) apiItemsList(w http.ResponseWriter, r *http.Request, items []store.Item, withContent bool) {
+	out := make([]apiItem, 0, len(items))
+	for _, item := range items {
+		tags, err := s.store.ItemTags(r.Context(), item.ID)
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
+		out = append(out, toAPIItem(item, tags, withContent))
+	}
+	s.apiJSON(w, r, out)
+}
+
 func (s *Server) apiItems(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "read") {
+		return
+	}
 	items, err := s.store.AllItems(r.Context())
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
-	s.apiJSON(w, r, items)
+	s.apiItemsList(w, r, items, true)
 }
+
+// apiShared powers the website: shared links (read_later=0) form the linklog,
+// shared articles (read_later=1) the read-articles page. Filter with
+// ?read_later=1 or ?read_later=0.
+func (s *Server) apiShared(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "read") {
+		return
+	}
+	items, _, err := s.store.ListPage(r.Context(), store.ListOptions{
+		Shared: "1", ReadLater: r.URL.Query().Get("read_later"), Sort: "", PerPage: 100,
+	})
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	s.apiItemsList(w, r, items, false)
+}
+
 func (s *Server) apiFeeds(w http.ResponseWriter, r *http.Request) {
 	feeds, err := s.store.AllFeeds(r.Context())
 	if err != nil {
@@ -741,20 +1028,102 @@ func (s *Server) apiFeeds(w http.ResponseWriter, r *http.Request) {
 	s.apiJSON(w, r, feeds)
 }
 func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "read") {
+		return
+	}
 	items, err := s.store.Search(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
 		http.Error(w, "invalid search query", http.StatusBadRequest)
 		return
 	}
-	s.apiJSON(w, r, items)
+	s.apiItemsList(w, r, items, false)
 }
+
+type apiHighlight struct {
+	ID        int64  `json:"id"`
+	ItemID    int64  `json:"item_id"`
+	Quote     string `json:"quote"`
+	Note      string `json:"note,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toAPIHighlight(h store.Highlight) apiHighlight {
+	return apiHighlight{ID: h.ID, ItemID: h.ItemID, Quote: h.Quote, Note: h.Note, CreatedAt: h.CreatedAt.UTC().Format(time.RFC3339)}
+}
+
 func (s *Server) apiHighlights(w http.ResponseWriter, r *http.Request) {
 	highlights, err := s.store.ListHighlights(r.Context())
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
-	s.apiJSON(w, r, highlights)
+	out := make([]apiHighlight, 0, len(highlights))
+	for _, h := range highlights {
+		out = append(out, toAPIHighlight(h))
+	}
+	s.apiJSON(w, r, out)
+}
+
+// apiMarkRead lets the Obsidian plugin push read state. Body: {"read": true}.
+func (s *Server) apiMarkRead(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "write") {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid item id", http.StatusBadRequest)
+		return
+	}
+	var request struct {
+		Read bool `json:"read"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	state := "unread"
+	if request.Read {
+		state = "read"
+	}
+	if err := s.store.SetReadState(r.Context(), id, state); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	item, err := s.store.Item(r.Context(), id)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(toAPIItem(item, nil, false))
+}
+
+// apiAddHighlight lets the Obsidian plugin push a highlight. Body:
+// {"quote": "...", "note": "..."}.
+func (s *Server) apiAddHighlight(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, "write") {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid item id", http.StatusBadRequest)
+		return
+	}
+	var request struct {
+		Quote string `json:"quote"`
+		Note  string `json:"note"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&request); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.AddHighlight(r.Context(), id, request.Quote, request.Note, 0); err != nil {
+		http.Error(w, "a highlight needs text", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusCreated)
 }
 
 func (s *Server) exportJSON(w http.ResponseWriter, r *http.Request, _ string) {
@@ -843,10 +1212,18 @@ func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {
 		s.internalError(w, errors.New("manual saver is not configured"))
 		return
 	}
-	id, err := s.cfg.Saver.Save(r.Context(), r.FormValue("url"), strings.Split(r.FormValue("tags"), ","))
+	rawURL := r.FormValue("url")
+	tags := strings.Split(r.FormValue("tags"), ",")
+	var id int64
+	var err error
+	if r.FormValue("read_later") == "1" {
+		id, err = s.cfg.Saver.Save(r.Context(), rawURL, tags)
+	} else {
+		id, err = s.cfg.Saver.SaveLink(r.Context(), rawURL, tags)
+	}
 	if err != nil {
 		s.log.Warn("page save failed", "error", err)
-		s.render(w, "Save page", "", "Could not save that page. Check the URL and try again.")
+		s.render(w, "Add a link", "", "Could not save that URL. Check it and try again.")
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
@@ -893,6 +1270,22 @@ func starButtonAttr(starred bool) string {
 		return ` class="primary"`
 	}
 	return ""
+}
+
+// linkBroken reports whether a stored link failed its last reachability check.
+func linkBroken(item store.Item) bool {
+	return item.Source == "manual" && (item.LinkStatus >= 400 || item.LinkStatus < 0)
+}
+
+func shortDate(v sql.NullString) string {
+	if !v.Valid {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, v.String)
+	if err != nil {
+		return ""
+	}
+	return t.Format("Jan 2, 2006")
 }
 
 func viewTab(href, label, state, current string) string {

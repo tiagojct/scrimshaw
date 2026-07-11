@@ -1,10 +1,11 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<style>body{font:14px sans-serif;min-width:18rem;padding:1rem}label,input,button{display:block;width:100%;box-sizing:border-box;margin:.4rem 0}</style>
+<style>body{font:14px sans-serif;min-width:18rem;padding:1rem}label,input,button{display:block;width:100%;box-sizing:border-box;margin:.4rem 0}label.inline{display:flex;gap:.4rem;align-items:center;width:auto}label.inline input{width:auto;margin:0}</style>
 <label>Scrimshaw URL <input id="origin" type="url" placeholder="https://scrimshaw.example"></label>
-<label>Save token <input id="token" type="password"></label>
+<label>Write token <input id="token" type="password"></label>
 <label>Tags <input id="tags" placeholder="comma-separated"></label>
+<label class="inline"><input id="readlater" type="checkbox" checked> Read later (unticked stores a link-only bookmark)</label>
 <button id="save">Save current page</button>
 <p id="status"></p>
 <script src="popup.js"></script>

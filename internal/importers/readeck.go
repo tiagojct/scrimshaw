@@ -31,7 +31,7 @@ func Readeck(ctx context.Context, input io.Reader, destination *store.Store) (in
 	}
 	var imported int
 	for _, bookmark := range bookmarks {
-		id, err := destination.InsertManualItem(ctx, bookmark.URL, bookmark.Title, "", "", bookmark.Content, bookmark.Labels)
+		id, err := destination.InsertManualItem(ctx, bookmark.URL, bookmark.Title, "", "", bookmark.Content, bookmark.Labels, true)
 		if err != nil {
 			continue
 		}

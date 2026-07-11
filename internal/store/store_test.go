@@ -50,3 +50,71 @@ func TestMigrationsCreateFTSAndDeduplicateItems(t *testing.T) {
 		t.Fatalf("snapshot FTS matches = %d, want 1", snapshotMatches)
 	}
 }
+
+func TestBookmarksReadLaterDatesAndLinkChecks(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	bookmarkID, err := s.InsertManualItem(ctx, "https://link.example/a", "A link", "", "", "", nil, false)
+	if err != nil {
+		t.Fatalf("insert bookmark: %v", err)
+	}
+	articleID, err := s.InsertManualItem(ctx, "https://read.example/b", "An article", "", "", "<p>body</p>", nil, true)
+	if err != nil {
+		t.Fatalf("insert article: %v", err)
+	}
+
+	// Views split by read_later.
+	bookmarks, _, err := s.ListPage(ctx, ListOptions{Source: "manual", ReadLater: "0"})
+	if err != nil || len(bookmarks) != 1 || bookmarks[0].ID != bookmarkID {
+		t.Fatalf("bookmarks view = %+v err=%v", bookmarks, err)
+	}
+	later, _, err := s.ListPage(ctx, ListOptions{Source: "manual", ReadLater: "1"})
+	if err != nil || len(later) != 1 || later[0].ID != articleID {
+		t.Fatalf("read-later view = %+v err=%v", later, err)
+	}
+
+	// read_at is stamped on read and cleared on unread.
+	if err := s.SetReadState(ctx, articleID, "read"); err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.Item(ctx, articleID)
+	if err != nil || !item.ReadAt.Valid {
+		t.Fatalf("read_at not set: item=%+v err=%v", item, err)
+	}
+	if err := s.SetReadState(ctx, articleID, "unread"); err != nil {
+		t.Fatal(err)
+	}
+	if item, _ = s.Item(ctx, articleID); item.ReadAt.Valid {
+		t.Fatal("read_at should be cleared when unread")
+	}
+
+	// A never-checked link is due; recording a status clears it from the queue.
+	due, err := s.LinksToCheck(ctx, time.Now(), 10)
+	if err != nil || len(due) != 2 {
+		t.Fatalf("links to check = %d err=%v", len(due), err)
+	}
+	if err := s.SetLinkStatus(ctx, bookmarkID, 404); err != nil {
+		t.Fatal(err)
+	}
+	if item, _ = s.Item(ctx, bookmarkID); item.LinkStatus != 404 || !item.LinkCheckedAt.Valid {
+		t.Fatalf("link status not recorded: %+v", item)
+	}
+	due, err = s.LinksToCheck(ctx, time.Now().Add(-time.Hour), 10)
+	if err != nil || len(due) != 1 || due[0].ID != articleID {
+		t.Fatalf("after check, due = %+v err=%v", due, err)
+	}
+
+	// Shared items feed the website linklog/read-articles split.
+	if err := s.SetShared(ctx, bookmarkID, true); err != nil {
+		t.Fatal(err)
+	}
+	shared, _, err := s.ListPage(ctx, ListOptions{Shared: "1", ReadLater: "0"})
+	if err != nil || len(shared) != 1 || shared[0].ID != bookmarkID {
+		t.Fatalf("shared linklog = %+v err=%v", shared, err)
+	}
+}

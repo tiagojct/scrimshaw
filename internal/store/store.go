@@ -25,9 +25,24 @@ type Item struct {
 	URL, CanonicalURL, Title, Author, SiteName, ExtractedText, ReadState, Source string
 	SnapshotPath                                                                 sql.NullString
 	FeedID                                                                       sql.NullInt64
-	PublishedAt                                                                  sql.NullString
+	PublishedAt, ReadAt, LinkCheckedAt                                           sql.NullString
 	AddedAt                                                                      time.Time
-	Starred, Archived                                                            bool
+	Starred, Archived, ReadLater, Shared                                         bool
+	LinkStatus                                                                   int
+}
+
+// itemColumns is the shared projection for reading items; keep the scan in
+// scanItem aligned with this list.
+const itemColumns = `i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.read_at, i.starred, i.archived, i.read_later, i.shared, i.link_status, i.link_checked_at`
+
+func scanItem(rows interface{ Scan(...any) error }) (Item, error) {
+	var item Item
+	var added string
+	err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName,
+		&item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt,
+		&added, &item.ReadAt, &item.Starred, &item.Archived, &item.ReadLater, &item.Shared, &item.LinkStatus, &item.LinkCheckedAt)
+	item.AddedAt, _ = time.Parse(time.RFC3339, added)
+	return item, err
 }
 
 type Feed struct {
@@ -39,6 +54,7 @@ type Feed struct {
 
 type ListOptions struct {
 	Tag, State, ItemType, Sort, Source string
+	ReadLater, Shared                  string // "1", "0", or "" for no filter
 	Page, PerPage                      int
 }
 
@@ -246,19 +262,17 @@ func (s *Store) ListItems(ctx context.Context) ([]Item, error) {
 }
 
 func (s *Store) AllItems(ctx context.Context) ([]Item, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, url, canonical_url, title, author, site_name, extracted_text, read_state, snapshot_path, feed_id, published_at, added_at FROM items ORDER BY added_at`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i ORDER BY i.added_at`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var items []Item
 	for rows.Next() {
-		var item Item
-		var added string
-		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added); err != nil {
+		item, err := scanItem(rows)
+		if err != nil {
 			return nil, err
 		}
-		item.AddedAt, _ = time.Parse(time.RFC3339, added)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -307,6 +321,12 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		where = append(where, "i.source=?")
 		args = append(args, options.Source)
 	}
+	if options.ReadLater == "1" || options.ReadLater == "0" {
+		where = append(where, "i.read_later="+options.ReadLater)
+	}
+	if options.Shared == "1" {
+		where = append(where, "i.shared=1")
+	}
 	if options.Tag != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND t.name=? COLLATE NOCASE)`)
 		args = append(args, options.Tag)
@@ -328,7 +348,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		order = "CASE i.read_state WHEN 'unread' THEN 0 ELSE 1 END, COALESCE(i.published_at, i.added_at) DESC"
 	}
 	pageArgs := append(append([]any{}, args...), options.PerPage, (options.Page-1)*options.PerPage)
-	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.starred, i.archived
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+`
 		FROM items i WHERE `+condition+` ORDER BY `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -336,12 +356,10 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	defer rows.Close()
 	var items []Item
 	for rows.Next() {
-		var item Item
-		var added string
-		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived); err != nil {
+		item, err := scanItem(rows)
+		if err != nil {
 			return nil, 0, err
 		}
-		item.AddedAt, _ = time.Parse(time.RFC3339, added)
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
@@ -365,19 +383,37 @@ func (s *Store) UnreadTagCounts(ctx context.Context) ([]Count, error) {
 }
 
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
-	var item Item
-	var added string
-	err := s.DB.QueryRowContext(ctx, `SELECT id,url,canonical_url,title,author,site_name,extracted_text,read_state,source,snapshot_path,feed_id,published_at,added_at,starred,archived FROM items WHERE id=?`, id).
-		Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived)
-	item.AddedAt, _ = time.Parse(time.RFC3339, added)
-	return item, err
+	return scanItem(s.DB.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id=?`, id))
+}
+
+// ItemTags returns an item's tag names, sorted.
+func (s *Store) ItemTags(ctx context.Context, id int64) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.name FROM tags t JOIN item_tags it ON it.tag_id=t.id WHERE it.item_id=? ORDER BY t.name`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tags := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		tags = append(tags, name)
+	}
+	return tags, rows.Err()
 }
 
 func (s *Store) SetReadState(ctx context.Context, id int64, state string) error {
 	if state != "read" && state != "unread" {
 		return errors.New("invalid read state")
 	}
-	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state=? WHERE id=?", state, id)
+	// Stamp read_at on the first transition to read; clear it when unread.
+	if state == "read" {
+		_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state='read', read_at=COALESCE(read_at, ?) WHERE id=?", time.Now().UTC().Format(time.RFC3339), id)
+		return err
+	}
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_state='unread', read_at=NULL WHERE id=?", id)
 	return err
 }
 
@@ -388,6 +424,76 @@ func (s *Store) SetArchived(ctx context.Context, id int64, archived bool) error 
 
 func (s *Store) SetStarred(ctx context.Context, id int64, starred bool) error {
 	_, err := s.DB.ExecContext(ctx, "UPDATE items SET starred=? WHERE id=?", starred, id)
+	return err
+}
+
+func (s *Store) SetShared(ctx context.Context, id int64, shared bool) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET shared=? WHERE id=?", shared, id)
+	return err
+}
+
+// LinksToCheck returns manually stored links whose reachability has not been
+// verified since `before`, oldest check first, for the dead-link checker.
+func (s *Store) LinksToCheck(ctx context.Context, before time.Time, limit int) ([]Item, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i
+		WHERE i.source='manual' AND (i.link_checked_at IS NULL OR i.link_checked_at < ?)
+		ORDER BY i.link_checked_at IS NOT NULL, i.link_checked_at LIMIT ?`,
+		before.UTC().Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Item
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// SetLinkStatus records the outcome of a dead-link check. status is an HTTP
+// status code, or a negative value for a transport error.
+func (s *Store) SetLinkStatus(ctx context.Context, id int64, status int) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET link_status=?, link_checked_at=? WHERE id=?",
+		status, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+// Stats summarizes the datastore for the dashboard.
+type Stats struct {
+	UnreadFeeds, ReadLaterUnread, ReadLaterTotal, Bookmarks, BrokenLinks, Highlights, Shared int
+}
+
+func (s *Store) Stats(ctx context.Context) (Stats, error) {
+	var st Stats
+	row := s.DB.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM items WHERE source='feed' AND archived=0 AND read_state='unread'),
+		(SELECT COUNT(*) FROM items WHERE read_later=1 AND archived=0 AND read_state='unread'),
+		(SELECT COUNT(*) FROM items WHERE read_later=1 AND archived=0),
+		(SELECT COUNT(*) FROM items WHERE source='manual' AND read_later=0 AND archived=0),
+		(SELECT COUNT(*) FROM items WHERE source='manual' AND archived=0 AND (link_status>=400 OR link_status<0)),
+		(SELECT COUNT(*) FROM highlights),
+		(SELECT COUNT(*) FROM items WHERE shared=1)`)
+	err := row.Scan(&st.UnreadFeeds, &st.ReadLaterUnread, &st.ReadLaterTotal, &st.Bookmarks, &st.BrokenLinks, &st.Highlights, &st.Shared)
+	return st, err
+}
+
+func (s *Store) SetReadLater(ctx context.Context, id int64, readLater bool) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_later=? WHERE id=?", readLater, id)
+	return err
+}
+
+// SetContent fills in a bookmark's extracted article after the fact, e.g. when
+// a stored link is promoted to Read Later.
+func (s *Store) SetContent(ctx context.Context, id int64, title, author, siteName, content string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE items SET extracted_text=?,
+		title=CASE WHEN ?<>'' THEN ? ELSE title END,
+		author=CASE WHEN ?<>'' THEN ? ELSE author END,
+		site_name=CASE WHEN ?<>'' THEN ? ELSE site_name END WHERE id=?`,
+		content, title, title, author, author, siteName, siteName, id)
 	return err
 }
 
@@ -481,18 +587,24 @@ func (s *Store) Search(ctx context.Context, query string) ([]Item, error) {
 	return items, rows.Err()
 }
 
-func (s *Store) InsertManualItem(ctx context.Context, rawURL, title, author, siteName, content string, tags []string) (int64, error) {
+func (s *Store) InsertManualItem(ctx context.Context, rawURL, title, author, siteName, content string, tags []string, readLater bool) (int64, error) {
 	canonical, err := CanonicalURL(rawURL)
 	if err != nil {
 		return 0, err
+	}
+	itemType := "link"
+	readLaterFlag := 0
+	if readLater {
+		itemType = "article"
+		readLaterFlag = 1
 	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO items(url, canonical_url, content_hash, title, author, site_name, source, added_at, extracted_text)
-		VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?) ON CONFLICT DO NOTHING`,
-		rawURL, canonical, contentHash(title, content), title, author, siteName, time.Now().UTC().Format(time.RFC3339), content)
+	result, err := tx.ExecContext(ctx, `INSERT INTO items(url, canonical_url, content_hash, title, author, site_name, source, item_type, read_later, added_at, extracted_text)
+		VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		rawURL, canonical, contentHash(title, content), title, author, siteName, itemType, readLaterFlag, time.Now().UTC().Format(time.RFC3339), content)
 	if err != nil {
 		tx.Rollback()
 		return 0, err
@@ -597,13 +709,18 @@ func (s *Store) ClearLoginFailures(ctx context.Context, address string) error {
 	return err
 }
 
-func (s *Store) CreateAPIToken(ctx context.Context, name, tokenHash string) error {
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO api_tokens(name, token_hash, scopes, created_at) VALUES (?, ?, 'save', ?)`, name, tokenHash, time.Now().UTC().Format(time.RFC3339))
+func (s *Store) CreateAPIToken(ctx context.Context, name, tokenHash, scopes string) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO api_tokens(name, token_hash, scopes, created_at) VALUES (?, ?, ?, ?)`, name, tokenHash, scopes, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
-func (s *Store) ValidAPIToken(ctx context.Context, tokenHash string) (bool, error) {
-	var count int
-	err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM api_tokens WHERE token_hash=? AND revoked_at IS NULL AND scopes LIKE '%save%'", tokenHash).Scan(&count)
-	return count == 1, err
+// TokenScopes returns the space-separated scopes of a live (non-revoked) token,
+// or an empty string when the token is unknown or revoked.
+func (s *Store) TokenScopes(ctx context.Context, tokenHash string) (string, error) {
+	var scopes string
+	err := s.DB.QueryRowContext(ctx, "SELECT scopes FROM api_tokens WHERE token_hash=? AND revoked_at IS NULL", tokenHash).Scan(&scopes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return scopes, err
 }

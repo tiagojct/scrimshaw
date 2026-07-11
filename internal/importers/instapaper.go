@@ -40,7 +40,7 @@ func Instapaper(ctx context.Context, input io.Reader, destination *store.Store) 
 		if hasFolder && folderColumn < len(row) && strings.TrimSpace(row[folderColumn]) != "" {
 			tags = []string{strings.TrimSpace(row[folderColumn])}
 		}
-		id, err := destination.InsertManualItem(ctx, row[urlColumn], title, "", "", "", tags)
+		id, err := destination.InsertManualItem(ctx, row[urlColumn], title, "", "", "", tags, true)
 		if err != nil {
 			continue
 		}

@@ -100,6 +100,25 @@ func (c *Client) GetMedia(ctx context.Context, rawURL string) ([]byte, http.Head
 	return c.get(ctx, rawURL, "", "", true)
 }
 
+// Status performs an SSRF-guarded request and returns the final HTTP status
+// code without reading the body. Used by the dead-link checker.
+func (c *Client) Status(ctx context.Context, rawURL string) (int, error) {
+	if err := ValidateURL(rawURL); err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "Scrimshaw/1.0 (+https://github.com/tiagojct/scrimshaw)")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
 func (c *Client) get(ctx context.Context, rawURL, etag, modified string, allowMedia bool) ([]byte, http.Header, error) {
 	if err := ValidateURL(rawURL); err != nil {
 		return nil, nil, err
