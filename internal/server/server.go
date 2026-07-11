@@ -289,7 +289,13 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	if len(items) == 0 {
 		fmt.Fprintf(&b, `<p class="note">%s</p>`, v.empty)
 	}
-	b.WriteString(`<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><ul class="items">`)
+	// Bold-for-unread only reads as meaningful in the reading queues; in the
+	// permanent collections every item renders the same.
+	listClass := "items"
+	if v.key == "feeds" || v.key == "later" {
+		listClass = "items queue"
+	}
+	fmt.Fprintf(&b, `<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="%s"><ul class="%s">`, template.HTMLEscapeString(csrf(r)), listClass)
 	for _, item := range items {
 		classes := template.HTMLEscapeString(item.ReadState)
 		if item.Starred {
@@ -358,7 +364,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 	stat("/?view=feeds&sort=unread", st.UnreadFeeds, "Unread in feeds")
 	stat("/?view=later", st.ReadLaterUnread, "To read")
 	stat("/?view=bookmarks", st.Bookmarks, "Bookmarks")
-	stat("/?view=starred", st.Shared, "Shared")
+	stat("/?view=starred", st.Starred, "Starred")
 	stat("/highlights", st.Highlights, "Highlights")
 	if st.BrokenLinks > 0 {
 		stat("/?view=bookmarks", st.BrokenLinks, "Broken links")

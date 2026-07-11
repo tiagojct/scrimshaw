@@ -211,9 +211,10 @@ ul { list-style: none; margin: 0; padding: 0; }
   border-bottom: 1px solid var(--gl-border);
 }
 .items li a { font-weight: 400; text-decoration: none; }
-.items li a:hover { text-decoration: underline; }
-.items li.unread a { font-weight: 600; color: var(--gl-text); }
-.items li.unread a:hover { color: var(--gl-accent); }
+.items li a:hover { text-decoration: underline; color: var(--gl-accent); }
+/* Bold-for-unread only in the reading queues (Feeds, Read Later). */
+.items.queue li.unread a { font-weight: 600; color: var(--gl-text); }
+.items.queue li.unread a:hover { color: var(--gl-accent); }
 .items li input[type="checkbox"] { transform: translateY(0.15rem); }
 .items small { color: var(--gl-text-muted); font-size: 0.85rem; }
 

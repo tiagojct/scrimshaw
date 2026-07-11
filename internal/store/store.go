@@ -471,20 +471,22 @@ func (s *Store) SetLinkStatus(ctx context.Context, id int64, status int) error {
 
 // Stats summarizes the datastore for the dashboard.
 type Stats struct {
-	UnreadFeeds, ReadLaterUnread, ReadLaterTotal, Bookmarks, BrokenLinks, Highlights, Shared int
+	UnreadFeeds, ReadLaterUnread, Bookmarks, BrokenLinks, Highlights, Starred, Shared int
 }
 
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	var st Stats
+	// Bookmarks and Starred are permanent collections, counted regardless of
+	// archive state so the tiles match their views.
 	row := s.DB.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM items WHERE source='feed' AND archived=0 AND read_state='unread'),
 		(SELECT COUNT(*) FROM items WHERE read_later=1 AND archived=0 AND read_state='unread'),
-		(SELECT COUNT(*) FROM items WHERE read_later=1 AND archived=0),
-		(SELECT COUNT(*) FROM items WHERE bookmarked=1 AND archived=0),
-		(SELECT COUNT(*) FROM items WHERE bookmarked=1 AND archived=0 AND (link_status>=400 OR link_status<0)),
+		(SELECT COUNT(*) FROM items WHERE bookmarked=1),
+		(SELECT COUNT(*) FROM items WHERE bookmarked=1 AND (link_status>=400 OR link_status<0)),
 		(SELECT COUNT(*) FROM highlights),
+		(SELECT COUNT(*) FROM items WHERE starred=1),
 		(SELECT COUNT(*) FROM items WHERE shared=1)`)
-	err := row.Scan(&st.UnreadFeeds, &st.ReadLaterUnread, &st.ReadLaterTotal, &st.Bookmarks, &st.BrokenLinks, &st.Highlights, &st.Shared)
+	err := row.Scan(&st.UnreadFeeds, &st.ReadLaterUnread, &st.Bookmarks, &st.BrokenLinks, &st.Highlights, &st.Starred, &st.Shared)
 	return st, err
 }
 

@@ -8,8 +8,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	readability "github.com/go-shiori/go-readability"
+	"golang.org/x/net/html"
+
 	"github.com/tiagojct/scrimshaw/internal/fetch"
 	"github.com/tiagojct/scrimshaw/internal/sanitize"
 	"github.com/tiagojct/scrimshaw/internal/store"
@@ -38,20 +41,62 @@ func (s *Saver) Save(ctx context.Context, rawURL string, tags []string) (int64, 
 	return id, nil
 }
 
-// SaveLink stores a URL as a link-only bookmark. It fetches just enough to learn
-// a title; a page that will not load is still bookmarked (its link check will
-// flag it later).
+// SaveLink stores a URL as a link-only bookmark. It fetches the page to learn a
+// title from <title>/og:title, which works for any page (not just articles); a
+// page that will not load is still bookmarked (its link check flags it later).
 func (s *Saver) SaveLink(ctx context.Context, rawURL string, tags []string) (int64, error) {
-	title, author, siteName := "", "", ""
-	if title2, author2, site2, _, _, err := s.extract(ctx, rawURL); err == nil {
-		title, author, siteName = title2, author2, site2
+	title := ""
+	if body, _, err := s.Client.Get(ctx, rawURL, "", ""); err == nil {
+		title = pageTitle(body)
 	}
 	if title == "" {
 		if parsed, err := url.Parse(rawURL); err == nil {
 			title = parsed.Host
 		}
 	}
-	return s.Store.InsertManualItem(ctx, rawURL, title, author, siteName, "", tags, false)
+	return s.Store.InsertManualItem(ctx, rawURL, title, "", "", "", tags, false)
+}
+
+// pageTitle extracts a human title from an HTML page, preferring og:title /
+// twitter:title over the <title> element.
+func pageTitle(body []byte) string {
+	root, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	var docTitle, metaTitle string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "title":
+				if docTitle == "" && n.FirstChild != nil {
+					docTitle = strings.TrimSpace(n.FirstChild.Data)
+				}
+			case "meta":
+				var prop, content string
+				for _, a := range n.Attr {
+					switch a.Key {
+					case "property", "name":
+						prop = a.Val
+					case "content":
+						content = a.Val
+					}
+				}
+				if metaTitle == "" && (prop == "og:title" || prop == "twitter:title") {
+					metaTitle = strings.TrimSpace(content)
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(root)
+	if metaTitle != "" {
+		return metaTitle
+	}
+	return docTitle
 }
 
 // Extract populates an existing item's article content in place, e.g. when a
