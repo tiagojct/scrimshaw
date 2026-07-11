@@ -26,6 +26,7 @@ import (
 	"github.com/tiagojct/scrimshaw/internal/importers"
 	"github.com/tiagojct/scrimshaw/internal/reader"
 	"github.com/tiagojct/scrimshaw/internal/sanitize"
+	"github.com/tiagojct/scrimshaw/internal/server/static"
 	"github.com/tiagojct/scrimshaw/internal/store"
 	"github.com/tiagojct/scrimshaw/web"
 	"golang.org/x/crypto/bcrypt"
@@ -59,6 +60,8 @@ func (s *Server) Routes() http.Handler {
 	})
 	mux.HandleFunc("GET /manifest.webmanifest", s.manifest)
 	mux.HandleFunc("GET /service-worker.js", s.serviceWorker)
+	mux.HandleFunc("GET /app.css", s.asset("app.css", "text/css; charset=utf-8"))
+	mux.HandleFunc("GET /app.js", s.asset("app.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /setup", s.setup)
 	mux.HandleFunc("POST /setup", s.setup)
 	mux.HandleFunc("GET /login", s.login)
@@ -228,20 +231,28 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	var b strings.Builder
-	b.WriteString(`<p><a href="/feeds/new">Subscribe to a feed</a> | <a href="/save">Save a page</a> | <a href="/highlights">Highlights</a> | <a href="/tokens">API tokens</a> | <a href="/export.json">JSON export</a> | <a href="/export.opml">OPML export</a> | <a href="/import">Import data</a></p><form action="/search"><label>Search <input name="q" type="search"></label><button>Search</button></form><form action="/"><label>State <select name="state"><option value="">All</option><option value="unread">Unread</option><option value="read">Read</option></select></label><label>Sort <select name="sort"><option value="">Newest</option><option value="oldest">Oldest</option><option value="unread">Unread first</option></select></label><button>Apply</button></form><p>Unread tags: `)
-	for _, count := range tagCounts {
-		fmt.Fprintf(&b, `<a href="/?tag=%s">%s (%d)</a> `, url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
+	b.WriteString(`<nav class="toolbar"><a href="/feeds/new">Subscribe to a feed</a><a href="/save">Save a page</a><a href="/highlights">Highlights</a><a href="/import">Import data</a><a href="/tokens">API tokens</a><a href="/export.json">JSON export</a><a href="/export.opml">OPML export</a></nav><div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><label>State <select name="state"><option value="">All</option><option value="unread">Unread</option><option value="read">Read</option></select></label><label>Sort <select name="sort"><option value="">Newest</option><option value="oldest">Oldest</option><option value="unread">Unread first</option></select></label><button>Apply</button></form></div>`)
+	if len(tagCounts) > 0 {
+		b.WriteString(`<p class="tagbar">Unread tags: `)
+		for _, count := range tagCounts {
+			fmt.Fprintf(&b, `<a href="/?tag=%s">%s (%d)</a>`, url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
+		}
+		b.WriteString(`</p>`)
 	}
-	b.WriteString(`</p><form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><ul>`)
+	b.WriteString(`<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><ul class="items">`)
 	for _, item := range items {
-		fmt.Fprintf(&b, `<li class="%s"><label><input type="checkbox" name="item" value="%d"></label> <a href="/items/%d">%s</a> <small>%s</small></li>`, template.HTMLEscapeString(item.ReadState), item.ID, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author))
+		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"> <a href="/items/%d">%s</a> <small>%s</small></li>`, template.HTMLEscapeString(item.ReadState), item.ID, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author))
 	}
-	b.WriteString(`</ul><button name="action" value="read">Mark selected read</button><button name="action" value="archive">Archive selected</button></form>`)
-	if options.Page > 1 {
-		fmt.Fprintf(&b, `<a href="/?page=%d">Previous</a> `, options.Page-1)
-	}
-	if options.Page*options.PerPage < total {
-		fmt.Fprintf(&b, `<a href="/?page=%d">Next</a>`, options.Page+1)
+	b.WriteString(`</ul><div class="bulk-actions"><button name="action" value="read">Mark selected read</button><button name="action" value="archive">Archive selected</button></div></form>`)
+	if options.Page > 1 || options.Page*options.PerPage < total {
+		b.WriteString(`<div class="pager">`)
+		if options.Page > 1 {
+			fmt.Fprintf(&b, `<a href="/?page=%d">Previous</a>`, options.Page-1)
+		}
+		if options.Page*options.PerPage < total {
+			fmt.Fprintf(&b, `<a href="/?page=%d">Next</a>`, options.Page+1)
+		}
+		b.WriteString(`</div>`)
 	}
 	b.WriteString(`<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><button>Log out</button></form>`)
 	s.render(w, "Items", b.String(), "")
@@ -267,11 +278,44 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	snapshotLink := ""
 	if item.SnapshotPath.Valid {
-		snapshotLink = fmt.Sprintf(` | <a href="/items/%d/snapshot">Open offline snapshot</a>`, item.ID)
+		snapshotLink = fmt.Sprintf(` &middot; <a href="/items/%d/snapshot">Open offline snapshot</a>`, item.ID)
 	}
-	body := fmt.Sprintf(`<article data-item-id="%d"><h1>%s</h1><p><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s</p><div class="reader">%s</div></article><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><button>Archive</button></form><form method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><button>Star</button></form><form method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><label>Highlight <input name="quote" required></label><label>Note <input name="note"></label><button>Add highlight</button></form>`,
-		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, sanitize.HTML(item.ExtractedText), item.ID, template.HTMLEscapeString(csrf(r)), state, state, item.ID, template.HTMLEscapeString(csrf(r)), item.ID, template.HTMLEscapeString(csrf(r)), item.ID, template.HTMLEscapeString(csrf(r)))
-	s.render(w, item.Title, body, "")
+	highlights, err := s.store.HighlightsForItem(r.Context(), item.ID)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	token := template.HTMLEscapeString(csrf(r))
+	quotes := make([]string, 0, len(highlights))
+	for _, h := range highlights {
+		quotes = append(quotes, h.Quote)
+	}
+	quotesJSON, _ := json.Marshal(quotes)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s</p><div class="reader">%s</div></article>`,
+		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, sanitize.HTML(item.ExtractedText))
+	fmt.Fprintf(&b, `<div class="reader-actions"><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><button>Archive</button></form><form method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><button>Star</button></form></div>`,
+		item.ID, token, state, state, item.ID, token, item.ID, token)
+	// Selection popover and the hidden form it submits to create a highlight.
+	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
+	b.WriteString(`<section class="highlight-list"><h2>Highlights</h2>`)
+	if len(highlights) > 0 {
+		b.WriteString(`<ul>`)
+		for _, h := range highlights {
+			fmt.Fprintf(&b, `<li><q>%s</q>`, template.HTMLEscapeString(h.Quote))
+			if h.Note != "" {
+				fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(h.Note))
+			}
+			b.WriteString(`</li>`)
+		}
+		b.WriteString(`</ul>`)
+	} else {
+		b.WriteString(`<p class="note">Select any passage in the article to highlight it.</p>`)
+	}
+	fmt.Fprintf(&b, `<details class="manual-highlight"><summary>Add a highlight manually</summary><form method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><label>Highlight <input name="quote" required></label><label>Note <input name="note"></label><button>Add highlight</button></form></details></section>`, item.ID, token)
+	fmt.Fprintf(&b, `<script type="application/json" id="hl-data">%s</script>`, quotesJSON)
+	s.render(w, item.Title, b.String(), "")
 }
 func (s *Server) setReadState(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -355,11 +399,14 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<form action="/search"><label>Search <input name="q" type="search" value="%s"></label><button>Search</button></form><ul>`, template.HTMLEscapeString(query))
+	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" value="%s" autofocus></label><button>Search</button></form></div><ul class="items">`, template.HTMLEscapeString(query))
 	for _, item := range items {
-		fmt.Fprintf(&b, `<li><a href="/items/%d">%s</a></li>`, item.ID, template.HTMLEscapeString(item.Title))
+		fmt.Fprintf(&b, `<li><a href="/items/%d">%s</a> <small>%s</small></li>`, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author))
 	}
 	b.WriteString("</ul>")
+	if len(items) == 0 && query != "" {
+		b.WriteString(`<p class="note">No matches.</p>`)
+	}
 	s.render(w, "Search", b.String(), "")
 }
 func (s *Server) image(w http.ResponseWriter, r *http.Request, _ string) {
@@ -413,15 +460,21 @@ func (s *Server) highlights(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	var b strings.Builder
-	b.WriteString("<ul>")
-	for _, highlight := range highlights {
-		fmt.Fprintf(&b, `<li><a href="/items/%d">%s</a><br><q>%s</q>`, highlight.ItemID, "Item", template.HTMLEscapeString(highlight.Quote))
-		if highlight.Note != "" {
-			fmt.Fprintf(&b, `<p>%s</p>`, template.HTMLEscapeString(highlight.Note))
-		}
-		b.WriteString("</li>")
+	b.WriteString(`<section class="highlight-list"><h1>Highlights</h1>`)
+	if len(highlights) == 0 {
+		b.WriteString(`<p class="note">No highlights yet. Open an article and select text to make one.</p></section>`)
+		s.render(w, "Highlights", b.String(), "")
+		return
 	}
-	b.WriteString("</ul>")
+	b.WriteString(`<ul>`)
+	for _, highlight := range highlights {
+		fmt.Fprintf(&b, `<li><q>%s</q>`, template.HTMLEscapeString(highlight.Quote))
+		if highlight.Note != "" {
+			fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(highlight.Note))
+		}
+		fmt.Fprintf(&b, ` <a href="/items/%d">Open item</a></li>`, highlight.ItemID)
+	}
+	b.WriteString(`</ul></section>`)
 	s.render(w, "Highlights", b.String(), "")
 }
 func (s *Server) bulk(w http.ResponseWriter, r *http.Request, _ string) {
@@ -701,11 +754,23 @@ func (s *Server) serviceWorker(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(body)
 }
 
-var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="manifest" href="/manifest.webmanifest"><title>{{.Title}} | Scrimshaw</title><style>body{max-width:72rem;margin:2rem auto;padding:0 1rem;background:#f7f3e8;color:#1d1b18;font:18px Georgia,serif}a{color:#273f4c}.reader{max-width:42rem;line-height:1.65}.unread a{font-weight:bold}label{display:block;margin:.75rem 0}input,button{font:inherit;padding:.3rem}small{color:#625d55}</style></head><body><header><a href="/">Scrimshaw</a></header>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}<script>let g=false,i=0;addEventListener('keydown',e=>{if(e.target.matches('input,textarea'))return;let links=[...document.querySelectorAll('li a[href^="/items/"]')];if(g){location.href={'a':'/','f':'/feeds/new'}[e.key]||location.href;g=false;return}if(e.key==='g'){g=true}else if(e.key==='/'){document.querySelector('input')?.focus()}else if(e.key==='j'&&links.length){i=Math.min(i+1,links.length-1);links[i].focus()}else if(e.key==='k'&&links.length){i=Math.max(i-1,0);links[i].focus()}else if(e.key==='o'&&document.activeElement?.matches('li a')){location.href=document.activeElement.href}else if(e.key==='m'){document.querySelector('.read-form')?.requestSubmit()}else if(e.key==='v'){document.querySelector('.original-link')?.click()}else if(e.key==='a'){document.querySelector('.archive-form')?.requestSubmit()}})</script></body></html>`))
+func (s *Server) asset(name, contentType string) http.HandlerFunc {
+	body, err := static.Files.ReadFile(name)
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(body)
+	}
+}
+
+var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="masthead"><a class="brand" href="/">Scrimshaw</a></header>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}<main>{{.Body}}</main><script src="/app.js" defer></script></body></html>`))
 
 func (s *Server) render(w http.ResponseWriter, title, body, errorText string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	body += `<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js").catch(()=>{})}</script>`
 	if err := pageTemplate.Execute(w, map[string]any{"Title": title, "Body": template.HTML(body), "Error": errorText}); err != nil {
 		s.log.Error("render template", "error", err)
 	}

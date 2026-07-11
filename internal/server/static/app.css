@@ -1,0 +1,244 @@
+/* Scrimshaw interface, styled with the Glauca design system.
+   Tokens mirror glauca.json (Pruina light default, Profundum dark).
+   Fonts fall back gracefully; IBM Plex is used when installed. */
+
+:root {
+  --gl-font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --gl-font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+  --gl-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --gl-bg: #f0f4f6;
+  --gl-surface: #f7fafb;
+  --gl-surface-raised: #ffffff;
+  --gl-text: #16222a;
+  --gl-text-muted: #55646d;
+  --gl-border: #cdd7dc;
+  --gl-accent: #0b62cf;
+  --gl-accent-bright: #007aff;
+  --gl-accent-deep: #084b96;
+  --gl-on-accent: #f2f7fb;
+  --gl-success: #62ba46;
+  --gl-warn: #c79a3d;
+  --gl-error: #c96a6a;
+  --gl-visited: #55646d;
+  --gl-focus-ring: 0 0 0 3px #0b62cf40;
+  --gl-mark-bg: #c79a3d40;
+
+  --gl-radius: 6px;
+  --gl-radius-sm: 4px;
+  --gl-space-1: 0.25rem;
+  --gl-space-2: 0.5rem;
+  --gl-space-3: 0.75rem;
+  --gl-space-4: 1rem;
+  --gl-space-6: 1.5rem;
+  --gl-space-8: 2rem;
+  --gl-measure: 68ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gl-bg: #10161c;
+    --gl-surface: #171f26;
+    --gl-surface-raised: #1f2932;
+    --gl-text: #e8eef2;
+    --gl-text-muted: #8c8c8c;
+    --gl-border: #2a3540;
+    --gl-accent: #3d97ff;
+    --gl-accent-bright: #6cb2ff;
+    --gl-accent-deep: #007aff;
+    --gl-on-accent: #0b1218;
+    --gl-success: #62ba46;
+    --gl-warn: #c79a3d;
+    --gl-error: #c96a6a;
+    --gl-visited: #8c8c8c;
+    --gl-focus-ring: 0 0 0 3px #3d97ff40;
+    --gl-mark-bg: #c79a3d4d;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: var(--gl-space-8) var(--gl-space-4) var(--gl-space-16);
+  background: var(--gl-bg);
+  color: var(--gl-text);
+  font-family: var(--gl-font-sans);
+  font-size: 1.0625rem;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+}
+
+a { color: var(--gl-accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { color: var(--gl-accent-bright); }
+a:visited { color: var(--gl-visited); }
+
+:focus-visible { outline: none; box-shadow: var(--gl-focus-ring); border-radius: var(--gl-radius-sm); }
+
+h1, h2, h3 { font-family: var(--gl-font-serif); font-weight: 600; letter-spacing: -0.014em; line-height: 1.1; text-wrap: balance; }
+h1 { font-size: clamp(2rem, 1.62rem + 1.72vw, 3rem); margin: 0 0 var(--gl-space-4); }
+
+/* Masthead */
+.masthead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gl-space-3);
+  padding-bottom: var(--gl-space-3);
+  margin-bottom: var(--gl-space-6);
+  border-bottom: 1px solid var(--gl-border);
+}
+.masthead a.brand {
+  font-family: var(--gl-font-serif);
+  font-weight: 600;
+  font-size: 1.4rem;
+  color: var(--gl-text);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+.masthead a.brand:hover { color: var(--gl-accent); }
+
+/* Toolbar navigation */
+.toolbar { display: flex; flex-wrap: wrap; gap: var(--gl-space-1) var(--gl-space-3); margin: 0 0 var(--gl-space-6); padding: 0; list-style: none; }
+.toolbar a {
+  display: inline-block;
+  padding: var(--gl-space-1) var(--gl-space-3);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  background: var(--gl-surface);
+  color: var(--gl-accent);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+.toolbar a:hover { border-color: var(--gl-accent); background: var(--gl-surface-raised); }
+
+/* Filter forms */
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--gl-space-3); margin-bottom: var(--gl-space-6); }
+.filters label { margin: 0; }
+
+/* Form controls */
+label { display: block; margin: var(--gl-space-3) 0; font-size: 0.95rem; }
+input, button, select, textarea { font: inherit; }
+input[type="text"], input[type="url"], input[type="search"], input[type="password"], input:not([type]), select, textarea {
+  padding: var(--gl-space-2) var(--gl-space-3);
+  background: var(--gl-surface-raised);
+  color: var(--gl-text);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+}
+input::placeholder { color: var(--gl-text-muted); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: var(--gl-accent); }
+
+button, .button {
+  padding: var(--gl-space-2) var(--gl-space-4);
+  background: var(--gl-surface);
+  color: var(--gl-text);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  cursor: pointer;
+  line-height: 1.2;
+}
+button:hover, .button:hover { border-color: var(--gl-accent); background: var(--gl-surface-raised); }
+button.primary { background: var(--gl-accent); border-color: var(--gl-accent-deep); color: var(--gl-on-accent); }
+button.primary:hover { background: var(--gl-accent-bright); }
+
+/* Item list */
+ul { list-style: none; margin: 0; padding: 0; }
+.items li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gl-space-3);
+  padding: var(--gl-space-3) 0;
+  border-bottom: 1px solid var(--gl-border);
+}
+.items li a { font-weight: 400; text-decoration: none; }
+.items li a:hover { text-decoration: underline; }
+.items li.unread a { font-weight: 600; color: var(--gl-text); }
+.items li.unread a:hover { color: var(--gl-accent); }
+.items li input[type="checkbox"] { transform: translateY(0.15rem); }
+.items small { color: var(--gl-text-muted); font-size: 0.85rem; }
+
+.tagbar { color: var(--gl-text-muted); font-size: 0.9rem; margin-bottom: var(--gl-space-4); }
+.tagbar a { display: inline-block; margin-right: var(--gl-space-2); }
+
+.pager { margin: var(--gl-space-6) 0; display: flex; gap: var(--gl-space-4); }
+.bulk-actions { margin-top: var(--gl-space-4); display: flex; gap: var(--gl-space-3); }
+
+/* Reader view */
+.reader-actions { display: flex; flex-wrap: wrap; gap: var(--gl-space-2); margin: var(--gl-space-6) 0; }
+.reader-actions form { margin: 0; }
+article .meta { color: var(--gl-text-muted); font-size: 0.95rem; margin-bottom: var(--gl-space-6); }
+article .meta a { color: var(--gl-accent); }
+.reader {
+  font-family: var(--gl-font-serif);
+  font-size: 1.2rem;
+  line-height: 1.7;
+  max-width: 42rem;
+}
+.reader p { margin: 0 0 var(--gl-space-4); text-wrap: pretty; }
+.reader img { max-width: 100%; height: auto; border-radius: var(--gl-radius-sm); }
+.reader h1, .reader h2, .reader h3 { margin-top: var(--gl-space-8); }
+.reader blockquote {
+  margin: var(--gl-space-4) 0;
+  padding-left: var(--gl-space-4);
+  border-left: 3px solid var(--gl-border);
+  color: var(--gl-text-muted);
+}
+.reader pre, .reader code { font-family: var(--gl-font-mono); font-size: 0.9em; }
+.reader pre {
+  padding: var(--gl-space-3);
+  overflow-x: auto;
+  background: var(--gl-surface);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+}
+
+/* Highlights */
+mark.hl {
+  background: var(--gl-mark-bg);
+  color: inherit;
+  padding: 0 0.1em;
+  border-radius: 2px;
+}
+
+.hl-pop {
+  position: absolute;
+  z-index: 20;
+  transform: translate(-50%, -100%);
+  margin-top: -0.5rem;
+  padding: 0;
+  display: none;
+}
+.hl-pop.show { display: block; }
+.hl-pop button {
+  background: var(--gl-accent);
+  color: var(--gl-on-accent);
+  border: 1px solid var(--gl-accent-deep);
+  border-radius: var(--gl-radius);
+  padding: var(--gl-space-1) var(--gl-space-3);
+  font-size: 0.9rem;
+  box-shadow: 0 2px 8px #0b122833;
+}
+.hl-pop button:hover { background: var(--gl-accent-bright); }
+
+.highlight-list { margin-top: var(--gl-space-8); }
+.highlight-list h2 { font-size: 1.28rem; }
+.highlight-list li { padding: var(--gl-space-3) 0; border-bottom: 1px solid var(--gl-border); }
+.highlight-list q { color: var(--gl-text); }
+.highlight-list .note { color: var(--gl-text-muted); font-size: 0.95rem; margin: var(--gl-space-1) 0 0; }
+
+.manual-highlight { margin-top: var(--gl-space-6); }
+.manual-highlight summary { cursor: pointer; color: var(--gl-text-muted); font-size: 0.95rem; }
+
+/* Alerts */
+[role="alert"] {
+  padding: var(--gl-space-3) var(--gl-space-4);
+  margin-bottom: var(--gl-space-6);
+  background: var(--gl-surface);
+  border: 1px solid var(--gl-error);
+  border-left-width: 4px;
+  border-radius: var(--gl-radius);
+}
+
+blockquote, q { color: var(--gl-text-muted); }
+::selection { background: #0b62cf33; }

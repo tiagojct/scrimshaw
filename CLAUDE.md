@@ -20,7 +20,7 @@ Scrimshaw is a single-user, self-hosted Go application that unifies an RSS reade
 - mmcdole/gofeed for feed parsing.
 - go-shiori/go-readability for extraction.
 - microcosm-cc/bluemonday for HTML sanitization.
-- Plain CSS for theming. CSS and the small keyboard-nav JS are inlined in the page template, not served as separate assets.
+- Plain CSS for theming, following the Glauca design system (~/github/glauca; Pruina light default, Profundum dark via prefers-color-scheme). CSS and JS live in internal/server/static/ (app.css, app.js), embedded and served same-origin so the CSP needs no inline exceptions.
 
 ## Repository
 
@@ -47,7 +47,8 @@ extension/          browser extension (Manifest V3, unpacked)
 ## Architecture pointers
 
 - Routing: std-lib http.ServeMux with Go 1.22 method+pattern syntax in `Routes()` (internal/server/server.go). No router dependency.
-- HTML: one root `pageTemplate` shell in internal/server/server.go with inline CSS and JS; page bodies are built as escaped strings and injected as template.HTML. There is no templates/ or static/ directory.
+- HTML: one root `pageTemplate` shell in internal/server/server.go links /app.css and /app.js; page bodies are built as escaped strings and injected as template.HTML. Static CSS/JS are embedded from internal/server/static/ and served by the `asset` handler. There is no html/template templates directory.
+- Highlights: the reader marks saved highlights in place (app.js walks text nodes and wraps them in `<mark class="hl">`) and lets you select article text to create one (a popover posts to /items/{id}/highlights). Saved quotes are passed to the page as a `<script type="application/json" id="hl-data">` island; json.Marshal escapes `<` so it is XSS-safe. A manual add form remains as the no-JS fallback.
 - Auth/CSRF: `withSession` middleware in internal/server wraps authenticated routes; CSRF checked on non-GET with constant-time compare. `/api/*` routes use bearer tokens instead.
 - Migrations: SQL files in migrations/ embedded with go:embed; `store.Open` applies unapplied versions in a transaction on startup.
 - Feed polling: internal/feeds Service; main starts `Run(ctx, time.Minute)` as a goroutine, which polls due feeds with conditional GET (ETag/Last-Modified) and disables a feed after 5 consecutive failures.

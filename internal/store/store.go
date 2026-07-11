@@ -395,7 +395,16 @@ func (s *Store) AddHighlight(ctx context.Context, itemID int64, quote, note stri
 }
 
 func (s *Store) ListHighlights(ctx context.Context) ([]Highlight, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, item_id, quote, note, position, created_at FROM highlights ORDER BY created_at DESC`)
+	return s.scanHighlights(ctx, `SELECT id, item_id, quote, note, position, created_at FROM highlights ORDER BY created_at DESC`)
+}
+
+// HighlightsForItem returns the highlights of a single item, oldest first.
+func (s *Store) HighlightsForItem(ctx context.Context, itemID int64) ([]Highlight, error) {
+	return s.scanHighlights(ctx, `SELECT id, item_id, quote, note, position, created_at FROM highlights WHERE item_id = ? ORDER BY created_at`, itemID)
+}
+
+func (s *Store) scanHighlights(ctx context.Context, query string, args ...any) ([]Highlight, error) {
+	rows, err := s.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
