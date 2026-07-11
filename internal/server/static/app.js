@@ -23,6 +23,7 @@ if ("serviceWorker" in navigator) {
     else if (e.key === "k" && links.length) { cursor = Math.max(cursor - 1, 0); links[cursor].focus(); }
     else if (e.key === "o" && document.activeElement?.matches(".items li a")) { location.href = document.activeElement.href; }
     else if (e.key === "m") { document.querySelector(".read-form")?.requestSubmit(); }
+    else if (e.key === "s") { document.querySelector(".star-form")?.requestSubmit(); }
     else if (e.key === "v") { document.querySelector(".original-link")?.click(); }
     else if (e.key === "a") { document.querySelector(".archive-form")?.requestSubmit(); }
   });

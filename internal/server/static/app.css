@@ -112,9 +112,40 @@ h1 { font-size: clamp(2rem, 1.62rem + 1.72vw, 3rem); margin: 0 0 var(--gl-space-
 }
 .toolbar a:hover { border-color: var(--gl-accent); background: var(--gl-surface-raised); }
 
+/* View tabs */
+.views { display: flex; flex-wrap: wrap; gap: var(--gl-space-2); margin-bottom: var(--gl-space-4); }
+.views a {
+  padding: var(--gl-space-2) var(--gl-space-4);
+  border-radius: var(--gl-radius-pill, 999px);
+  text-decoration: none;
+  color: var(--gl-text-muted);
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+}
+.views a:hover { color: var(--gl-accent); background: var(--gl-surface); }
+.views a.active { color: var(--gl-on-accent); background: var(--gl-accent); border-color: var(--gl-accent-deep); }
+
 /* Filter forms */
 .filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--gl-space-3); margin-bottom: var(--gl-space-6); }
 .filters label { margin: 0; }
+
+/* Status badges */
+.badge {
+  display: inline-block;
+  padding: 0.05rem var(--gl-space-2);
+  border-radius: var(--gl-radius-sm);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--gl-text-muted);
+  background: var(--gl-surface);
+  border: 1px solid var(--gl-border);
+  vertical-align: middle;
+}
+.badge.star { color: var(--gl-warn); border-color: var(--gl-warn); background: var(--gl-mark-bg); }
+
+.note { color: var(--gl-text-muted); }
 
 /* Form controls */
 label { display: block; margin: var(--gl-space-3) 0; font-size: 0.95rem; }

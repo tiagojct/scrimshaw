@@ -27,6 +27,7 @@ type Item struct {
 	FeedID                                                               sql.NullInt64
 	PublishedAt                                                          sql.NullString
 	AddedAt                                                              time.Time
+	Starred, Archived                                                    bool
 }
 
 type Feed struct {
@@ -289,15 +290,22 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	if options.Page < 1 {
 		options.Page = 1
 	}
-	where := []string{"i.archived=0"}
+	var where []string
 	args := []any{}
+	switch options.State {
+	case "archived":
+		where = append(where, "i.archived=1")
+	case "starred":
+		where = append(where, "i.starred=1")
+	case "unread", "read":
+		where = append(where, "i.archived=0", "i.read_state=?")
+		args = append(args, options.State)
+	default:
+		where = append(where, "i.archived=0")
+	}
 	if options.Tag != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND t.name=? COLLATE NOCASE)`)
 		args = append(args, options.Tag)
-	}
-	if options.State == "unread" || options.State == "read" {
-		where = append(where, "i.read_state=?")
-		args = append(args, options.State)
 	}
 	if options.ItemType != "" {
 		where = append(where, "i.item_type=?")
@@ -316,7 +324,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		order = "CASE i.read_state WHEN 'unread' THEN 0 ELSE 1 END, COALESCE(i.published_at, i.added_at) DESC"
 	}
 	pageArgs := append(append([]any{}, args...), options.PerPage, (options.Page-1)*options.PerPage)
-	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.snapshot_path, i.feed_id, i.published_at, i.added_at
+	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.starred, i.archived
 		FROM items i WHERE `+condition+` ORDER BY `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return nil, 0, err
@@ -326,7 +334,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	for rows.Next() {
 		var item Item
 		var added string
-		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added); err != nil {
+		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived); err != nil {
 			return nil, 0, err
 		}
 		item.AddedAt, _ = time.Parse(time.RFC3339, added)
@@ -355,8 +363,8 @@ func (s *Store) UnreadTagCounts(ctx context.Context) ([]Count, error) {
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
 	var item Item
 	var added string
-	err := s.DB.QueryRowContext(ctx, `SELECT id,url,canonical_url,title,author,site_name,extracted_text,read_state,snapshot_path,feed_id,published_at,added_at FROM items WHERE id=?`, id).
-		Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added)
+	err := s.DB.QueryRowContext(ctx, `SELECT id,url,canonical_url,title,author,site_name,extracted_text,read_state,snapshot_path,feed_id,published_at,added_at,starred,archived FROM items WHERE id=?`, id).
+		Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added, &item.Starred, &item.Archived)
 	item.AddedAt, _ = time.Parse(time.RFC3339, added)
 	return item, err
 }

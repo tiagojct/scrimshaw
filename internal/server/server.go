@@ -215,6 +215,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, session string) 
 }
 func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
 	options := store.ListOptions{
 		Tag: r.URL.Query().Get("tag"), State: r.URL.Query().Get("state"),
 		ItemType: r.URL.Query().Get("type"), Sort: r.URL.Query().Get("sort"),
@@ -231,7 +234,16 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	var b strings.Builder
-	b.WriteString(`<nav class="toolbar"><a href="/feeds/new">Subscribe to a feed</a><a href="/save">Save a page</a><a href="/highlights">Highlights</a><a href="/import">Import data</a><a href="/tokens">API tokens</a><a href="/export.json">JSON export</a><a href="/export.opml">OPML export</a></nav><div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><label>State <select name="state"><option value="">All</option><option value="unread">Unread</option><option value="read">Read</option></select></label><label>Sort <select name="sort"><option value="">Newest</option><option value="oldest">Oldest</option><option value="unread">Unread first</option></select></label><button>Apply</button></form></div>`)
+	b.WriteString(`<nav class="toolbar"><a href="/feeds/new">Subscribe to a feed</a><a href="/save">Save a page</a><a href="/highlights">Highlights</a><a href="/import">Import data</a><a href="/tokens">API tokens</a><a href="/export.json">JSON export</a><a href="/export.opml">OPML export</a></nav>`)
+	b.WriteString(`<nav class="views">` +
+		viewTab("/", "Inbox", "", options.State) +
+		viewTab("/?state=unread", "Unread", "unread", options.State) +
+		viewTab("/?state=starred", "Saved", "starred", options.State) +
+		viewTab("/?state=archived", "Archived", "archived", options.State) +
+		`</nav>`)
+	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="state" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form></div>`,
+		template.HTMLEscapeString(options.State),
+		optionTag("", "Newest", options.Sort), optionTag("oldest", "Oldest", options.Sort), optionTag("unread", "Unread first", options.Sort))
 	if len(tagCounts) > 0 {
 		b.WriteString(`<p class="tagbar">Unread tags: `)
 		for _, count := range tagCounts {
@@ -239,9 +251,23 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		b.WriteString(`</p>`)
 	}
+	if len(items) == 0 {
+		b.WriteString(`<p class="note">Nothing here yet.</p>`)
+	}
 	b.WriteString(`<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><ul class="items">`)
 	for _, item := range items {
-		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"> <a href="/items/%d">%s</a> <small>%s</small></li>`, template.HTMLEscapeString(item.ReadState), item.ID, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author))
+		classes := template.HTMLEscapeString(item.ReadState)
+		if item.Starred {
+			classes += " starred"
+		}
+		badges := ""
+		if item.Starred {
+			badges += ` <span class="badge star">Saved</span>`
+		}
+		if item.Archived {
+			badges += ` <span class="badge">Archived</span>`
+		}
+		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"> <a href="/items/%d">%s</a> <small>%s</small>%s</li>`, classes, item.ID, item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.Author), badges)
 	}
 	b.WriteString(`</ul><div class="bulk-actions"><button name="action" value="read">Mark selected read</button><button name="action" value="archive">Archive selected</button></div></form>`)
 	if options.Page > 1 || options.Page*options.PerPage < total {
@@ -292,11 +318,31 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	quotesJSON, _ := json.Marshal(quotes)
 
+	var badges strings.Builder
+	if item.Author != "" {
+		fmt.Fprintf(&badges, ` &middot; %s`, template.HTMLEscapeString(item.Author))
+	}
+	if item.Starred {
+		badges.WriteString(` &middot; <span class="badge star">Saved</span>`)
+	}
+	if item.Archived {
+		badges.WriteString(` &middot; <span class="badge">Archived</span>`)
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s</p><div class="reader">%s</div></article>`,
-		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, sanitize.HTML(item.ExtractedText))
-	fmt.Fprintf(&b, `<div class="reader-actions"><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><button>Archive</button></form><form method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><button>Star</button></form></div>`,
-		item.ID, token, state, state, item.ID, token, item.ID, token)
+	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s%s</p><div class="reader">%s</div></article>`,
+		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, badges.String(), sanitize.HTML(item.ExtractedText))
+	starValue, starLabel := "1", "Save"
+	if item.Starred {
+		starValue, starLabel = "0", "Saved"
+	}
+	archiveValue, archiveLabel := "1", "Archive"
+	if item.Archived {
+		archiveValue, archiveLabel = "0", "Move to inbox"
+	}
+	fmt.Fprintf(&b, `<div class="reader-actions"><form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="%s"><button>Mark %s</button></form><form class="star-form" method="post" action="/items/%d/star"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="starred" value="%s"><button%s>%s</button></form><form class="archive-form" method="post" action="/items/%d/archive"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="archived" value="%s"><button>%s</button></form></div>`,
+		item.ID, token, state, state,
+		item.ID, token, starValue, starButtonAttr(item.Starred), starLabel,
+		item.ID, token, archiveValue, archiveLabel)
 	// Selection popover and the hidden form it submits to create a highlight.
 	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
 	b.WriteString(`<section class="highlight-list"><h2>Highlights</h2>`)
@@ -335,11 +381,16 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request, _ string) {
 		http.NotFound(w, r)
 		return
 	}
-	if err = s.store.SetArchived(r.Context(), id, true); err != nil {
+	archived := r.FormValue("archived") != "0"
+	if err = s.store.SetArchived(r.Context(), id, archived); err != nil {
 		s.internalError(w, err)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	if archived {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 func (s *Server) star(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -347,7 +398,7 @@ func (s *Server) star(w http.ResponseWriter, r *http.Request, _ string) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := s.store.SetStarred(r.Context(), id, true); err != nil {
+	if err := s.store.SetStarred(r.Context(), id, r.FormValue("starred") != "0"); err != nil {
 		s.internalError(w, err)
 		return
 	}
@@ -768,6 +819,28 @@ func (s *Server) asset(name, contentType string) http.HandlerFunc {
 }
 
 var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="masthead"><a class="brand" href="/">Scrimshaw</a></header>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}<main>{{.Body}}</main><script src="/app.js" defer></script></body></html>`))
+
+func starButtonAttr(starred bool) string {
+	if starred {
+		return ` class="primary"`
+	}
+	return ""
+}
+
+func viewTab(href, label, state, current string) string {
+	if state == current {
+		return fmt.Sprintf(`<a href="%s" class="active" aria-current="page">%s</a>`, href, label)
+	}
+	return fmt.Sprintf(`<a href="%s">%s</a>`, href, label)
+}
+
+func optionTag(value, label, current string) string {
+	selected := ""
+	if value == current {
+		selected = " selected"
+	}
+	return fmt.Sprintf(`<option value="%s"%s>%s</option>`, value, selected, label)
+}
 
 func (s *Server) render(w http.ResponseWriter, title, body, errorText string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
