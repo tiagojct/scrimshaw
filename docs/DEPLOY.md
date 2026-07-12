@@ -108,17 +108,29 @@ docker compose pull && docker compose up -d
 ```
 
 The image is published to `ghcr.io/tiagojct/scrimshaw` by the `Docker publish`
-GitHub Action on every push to `main` (`:latest`, `:sha-xxxxxxx`) and on version
-tags `v*` (`:1.2.3`, `:1.2`). The package is public, so pulls need no auth.
+GitHub Action. `:latest` moves **only on version tags** (`v*`) — cutting
+`v1.2.3` publishes `:1.2.3`, `:1.2`, and `:latest`. Pushes to `main` publish
+only `:main` and `:sha-xxxxxxx` (for traceability) and do **not** move `:latest`,
+so day-to-day commits never trigger a deploy. The package is public; pulls need
+no auth.
 
 **Automatic updates (watchtower):** the compose file ships a `watchtower`
-service that polls the registry every 5 minutes and restarts scrimshaw when a
-new image is published. It watches only the scrimshaw container (matched by the
-`com.centurylinklabs.watchtower.enable=true` label). It has no effect while
-scrimshaw runs from `build: .` — there is nothing to pull — so switch to the
-`image:` form above to use it. To keep updates manual instead, delete the
-`watchtower` service. For predictable releases, pin a specific tag
-(`image: ghcr.io/tiagojct/scrimshaw:1.2.3`) rather than tracking `:latest`.
+service that polls the registry every 5 minutes and restarts scrimshaw when the
+tracked tag's image changes. It watches only the scrimshaw container (matched by
+the `com.centurylinklabs.watchtower.enable=true` label). It has no effect while
+scrimshaw runs from `build: .` — there is nothing to pull — so use the `image:`
+form above. Because `:latest` only moves on version tags, tracking
+`image: ghcr.io/tiagojct/scrimshaw:latest` gives release-only auto-deploys: bump
+a `v*` tag and the VPS updates within ~5 minutes; ordinary `main` commits do not.
+To pin a release and update by hand instead, set an explicit tag
+(`image: ghcr.io/tiagojct/scrimshaw:1.2.3`); to disable auto-update entirely,
+delete the `watchtower` service.
+
+Cut a release with:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
 
 Migrations apply on startup. Take a backup first.
 
