@@ -4,7 +4,11 @@ services:
     # Once the image is published, swap the line above for:
     # image: ghcr.io/tiagojct/scrimshaw:latest
     ports:
-      - "8080:8080"
+      # Bind to loopback only: the app is reachable solely by the reverse proxy
+      # on the same host, never directly from the internet. The left-hand port is
+      # the host port the proxy targets (change it if 8080 is already taken on
+      # the box); the right-hand 8080 is the fixed in-container listen port.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./data:/data
     environment:
