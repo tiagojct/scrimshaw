@@ -139,6 +139,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /import/netscape", s.withSession(s.netscapeImport))
 	mux.HandleFunc("GET /import", s.withSession(s.importForm))
 	mux.HandleFunc("POST /import", s.withSession(s.importFile))
+	mux.HandleFunc("POST /import/opml", s.withSession(s.importOPML))
 	mux.HandleFunc("GET /search", s.withSession(s.search))
 	mux.HandleFunc("GET /highlights", s.withSession(s.highlights))
 	mux.HandleFunc("GET /images", s.withSession(s.image))
@@ -978,28 +979,63 @@ func (s *Server) bulk(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		ids = append(ids, id)
 	}
-	// Return to the list the action was invoked from.
-	back := "/"
-	if ref, err := url.Parse(r.Referer()); err == nil && ref.Path != "" {
-		back = ref.Path
-		if ref.RawQuery != "" {
-			back += "?" + ref.RawQuery
+	// Return to the list the action was invoked from. On the confirm step the
+	// referer is the confirmation page, so it carries the original list forward
+	// in a hidden field.
+	back := safeReturn(r.FormValue("return"))
+	if back == "/" {
+		if ref, err := url.Parse(r.Referer()); err == nil && ref.Path != "" {
+			candidate := ref.Path
+			if ref.RawQuery != "" {
+				candidate += "?" + ref.RawQuery
+			}
+			back = safeReturn(candidate)
 		}
-		back = safeReturn(back)
 	}
-	if r.FormValue("action") == "delete" {
+	if len(ids) == 0 {
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	switch r.FormValue("action") {
+	case "delete":
+		s.render(w, "Delete items", s.bulkDeleteConfirm(r, ids, back), "")
+		return
+	case "delete-confirm":
 		if err := s.bulkDelete(r.Context(), ids); err != nil {
 			s.internalError(w, err)
 			return
 		}
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
-	}
-	if err := s.store.BulkUpdate(r.Context(), ids, r.FormValue("action")); err != nil {
+	default:
+		_ = s.store.BulkUpdate(r.Context(), ids, r.FormValue("action"))
 		http.Redirect(w, r, back, http.StatusSeeOther)
-		return
 	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// bulkDeleteConfirm renders the confirmation page for a bulk delete.
+func (s *Server) bulkDeleteConfirm(r *http.Request, ids []int64, back string) string {
+	token := template.HTMLEscapeString(csrf(r))
+	var b strings.Builder
+	b.WriteString(dashboardToolbar)
+	fmt.Fprintf(&b, `<h1>Delete %d item%s?</h1><p class="subtitle">This permanently removes them, their highlights, notes, tags, and snapshots. It cannot be undone.</p>`, len(ids), plural(len(ids)))
+	b.WriteString(`<ul class="items">`)
+	for _, id := range ids {
+		item, err := s.store.Item(r.Context(), id)
+		title := "Item " + strconv.FormatInt(id, 10)
+		if err == nil && item.Title != "" {
+			title = item.Title
+		}
+		fmt.Fprintf(&b, `<li><div class="item-main"><span>%s</span></div></li>`, template.HTMLEscapeString(title))
+	}
+	b.WriteString(`</ul>`)
+	fmt.Fprintf(&b, `<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="action" value="delete-confirm"><input type="hidden" name="return" value="%s">`, token, template.HTMLEscapeString(back))
+	for _, id := range ids {
+		fmt.Fprintf(&b, `<input type="hidden" name="item" value="%d">`, id)
+	}
+	fmt.Fprintf(&b, `<div class="bulk-actions"><button class="danger-btn" type="submit">Delete %d item%s</button><a class="button" href="%s">Cancel</a></div></form>`,
+		len(ids), plural(len(ids)), template.HTMLEscapeString(back))
+	return b.String()
 }
 
 // bulkDelete removes the selected items and their snapshot files.
@@ -1693,6 +1729,16 @@ func (s *Server) importFile(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	defer file.Close()
+	// OPML feeds get a preview step so you can tag each feed before importing.
+	if format == "opml" {
+		feeds, err := importers.ParseOPML(file)
+		if err != nil || len(feeds) == 0 {
+			s.render(w, "Import data", importFormBody(template.HTMLEscapeString(csrf(r))), "No feeds found in that OPML file.")
+			return
+		}
+		s.render(w, "Import feeds", s.opmlPreviewBody(csrf(r), feeds), "")
+		return
+	}
 	count, err := importers.Import(r.Context(), format, file, s.store)
 	if err != nil {
 		s.log.Warn("import failed", "format", format, "error", err)
@@ -1700,6 +1746,47 @@ func (s *Server) importFile(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	s.render(w, "Import data", dashboardToolbar+`<h1>Import data</h1><p class="note">Imported `+strconv.Itoa(count)+` items.</p>`, "")
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func (s *Server) opmlPreviewBody(csrfToken string, feeds []importers.OPMLFeed) string {
+	token := template.HTMLEscapeString(csrfToken)
+	var b strings.Builder
+	b.WriteString(dashboardToolbar)
+	fmt.Fprintf(&b, `<h1>Import feeds</h1><p class="subtitle">%d feed%s found. Add tags to any of them, then import.</p>`, len(feeds), plural(len(feeds)))
+	fmt.Fprintf(&b, `<form method="post" action="/import/opml"><input type="hidden" name="csrf_token" value="%s"><ul class="opml-preview">`, token)
+	for _, f := range feeds {
+		title := f.Title
+		if title == "" {
+			title = f.URL
+		}
+		fmt.Fprintf(&b, `<li><div class="item-main"><span class="opml-title">%s</span><span class="feed-url">%s</span></div><input type="hidden" name="url" value="%s"><input name="tags" placeholder="tags, optional" aria-label="Tags for %s"></li>`,
+			template.HTMLEscapeString(title), template.HTMLEscapeString(f.URL), template.HTMLEscapeString(f.URL), template.HTMLEscapeString(title))
+	}
+	b.WriteString(`</ul><button class="primary">Import feeds</button> <a class="button" href="/import">Cancel</a></form>`)
+	return b.String()
+}
+
+func (s *Server) importOPML(w http.ResponseWriter, r *http.Request, _ string) {
+	urls := r.Form["url"]
+	tags := r.Form["tags"]
+	imported := 0
+	for i, rawURL := range urls {
+		tagStr := ""
+		if i < len(tags) {
+			tagStr = tags[i]
+		}
+		if _, err := s.store.AddFeed(r.Context(), rawURL, time.Hour, strings.Split(tagStr, ",")); err == nil {
+			imported++
+		}
+	}
+	s.render(w, "Import feeds", dashboardToolbar+fmt.Sprintf(`<h1>Import feeds</h1><p class="note">Imported %d feed%s. <a href="/feeds">Manage feeds</a>.</p>`, imported, plural(imported)), "")
 }
 
 func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {

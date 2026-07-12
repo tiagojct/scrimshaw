@@ -498,6 +498,18 @@ code.token {
 }
 .bookmarklet { cursor: grab; }
 .bookmarklet:active { cursor: grabbing; }
+
+/* OPML import preview: one row per feed with a tags field */
+.opml-preview li {
+  display: flex;
+  align-items: center;
+  gap: var(--gl-space-4);
+  padding: var(--gl-space-3) 0;
+  border-bottom: 1px solid var(--gl-border-soft);
+}
+.opml-preview .item-main { flex: 1; min-width: 0; }
+.opml-preview .opml-title { display: block; }
+.opml-preview input[name="tags"] { flex: none; width: 14rem; max-width: 40vw; }
 /* Starred rows get a small marker even where the badge is hidden. */
 .items li.starred .item-main > a::before { content: "\2605\00a0"; color: var(--gl-warn); }
 

@@ -64,7 +64,7 @@ Feeds that behave
 Publishing and portability
 - Share flag + a read-only API so you can drive a public linklog and a "read articles" page on your own website
 - Export everything as JSON, feeds as OPML, and articles as Markdown (one file per item with YAML frontmatter — title, URL, date — and the extracted content)
-- Import from Pocket, Instapaper, linkding, Readeck, and Netscape/browser bookmarks
+- Import from Pocket, Instapaper, linkding, Readeck, and Netscape/browser bookmarks; OPML feed imports show a preview where you can tag each feed before importing
 - Snapshots are plain HTML files you can read without the app
 
 ## Saving from anywhere
