@@ -1,5 +1,5 @@
 data/
-scrimshaw
+/scrimshaw
 *.db
 *.db-wal
 *.db-shm

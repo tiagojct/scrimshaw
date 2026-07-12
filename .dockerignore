@@ -1,0 +1,13 @@
+.git
+.github
+.gitignore
+data
+*.db
+*.db-wal
+*.db-shm
+/scrimshaw
+.DS_Store
+docs
+*.md
+LICENSE-*
+extension
