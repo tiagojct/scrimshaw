@@ -18,3 +18,18 @@ services:
       start_period: 5s
       retries: 3
     restart: unless-stopped
+    labels:
+      # Only containers with this label are watched by watchtower below.
+      com.centurylinklabs.watchtower.enable: "true"
+
+  # Auto-updater: polls the registry and restarts scrimshaw when a new image
+  # is published. This only works when scrimshaw runs FROM the registry image,
+  # not `build: .` — uncomment the `image:` line above and comment out `build:`.
+  # The image is public, so no registry auth is needed; if you make the ghcr
+  # package private, mount creds: - ${HOME}/.docker/config.json:/config.json:ro
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 --cleanup --label-enable

@@ -92,10 +92,33 @@ the data directory, then start it again. Never overwrite a live SQLite file.
 
 ## 5. Updates
 
+**Building from source (default compose):**
+
 ```sh
 git pull
-docker compose up -d --build   # or `docker compose pull && up -d` for a published image
+docker compose up -d --build
 ```
+
+**Tracking the published image** — swap the scrimshaw service in
+`docker-compose.yml` from `build: .` to
+`image: ghcr.io/tiagojct/scrimshaw:latest`, then:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+The image is published to `ghcr.io/tiagojct/scrimshaw` by the `Docker publish`
+GitHub Action on every push to `main` (`:latest`, `:sha-xxxxxxx`) and on version
+tags `v*` (`:1.2.3`, `:1.2`). The package is public, so pulls need no auth.
+
+**Automatic updates (watchtower):** the compose file ships a `watchtower`
+service that polls the registry every 5 minutes and restarts scrimshaw when a
+new image is published. It watches only the scrimshaw container (matched by the
+`com.centurylinklabs.watchtower.enable=true` label). It has no effect while
+scrimshaw runs from `build: .` — there is nothing to pull — so switch to the
+`image:` form above to use it. To keep updates manual instead, delete the
+`watchtower` service. For predictable releases, pin a specific tag
+(`image: ghcr.io/tiagojct/scrimshaw:1.2.3`) rather than tracking `:latest`.
 
 Migrations apply on startup. Take a backup first.
 
