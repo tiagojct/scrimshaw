@@ -106,6 +106,8 @@ docker compose up -d
 
 Open the app, complete the first-run setup to create your admin account (there is no default password), and add a feed or save your first link. The database and snapshots live under the mounted `./data` volume. Put Scrimshaw behind a TLS-terminating reverse proxy and set `SCRIMSHAW_BASE_URL` to its public HTTPS URL.
 
+The compose file above **builds the image locally**. Once the repo is pushed to GitHub, the `Docker publish` workflow builds a multi-arch image and pushes it to `ghcr.io/<owner>/scrimshaw` on every push to `main` and on version tags; you can then replace `build: .` with `image: ghcr.io/<owner>/scrimshaw:latest` and just `docker compose pull`.
+
 ### Binary
 
 ```sh
