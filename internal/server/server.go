@@ -1489,9 +1489,11 @@ func (s *Server) asset(name, contentType string) http.HandlerFunc {
 
 var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="topbar"><div class="bar-inner"><a class="brand" href="/">Scrimshaw</a><a class="brand-add" href="/save">Add a link</a></div></header><main class="container">{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}</main><script src="/app.js" defer></script></body></html>`))
 
-func starButtonAttr(starred bool) string {
-	if starred {
-		return ` class="primary"`
+// starButtonAttr marks a toggle button as active. Active toggles use a quiet
+// tinted treatment so the one solid-accent primary action stays the rare mark.
+func starButtonAttr(active bool) string {
+	if active {
+		return ` class="toggle-on"`
 	}
 	return ""
 }
