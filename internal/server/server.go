@@ -22,6 +22,7 @@ import (
 	"time"
 
 	exporter "github.com/tiagojct/scrimshaw/internal/export"
+	"github.com/tiagojct/scrimshaw/internal/feeds"
 	"github.com/tiagojct/scrimshaw/internal/fetch"
 	"github.com/tiagojct/scrimshaw/internal/importers"
 	"github.com/tiagojct/scrimshaw/internal/reader"
@@ -36,6 +37,7 @@ type Config struct {
 	SessionSecret []byte
 	CookieSecure  bool
 	Saver         *reader.Saver
+	Feeds         *feeds.Service
 	SnapshotsDir  string
 	ImageCacheDir string
 	Fetcher       *fetch.Client
@@ -83,6 +85,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /feeds", s.withSession(s.feedsList))
 	mux.HandleFunc("GET /feeds/new", s.withSession(s.newFeed))
 	mux.HandleFunc("POST /feeds", s.withSession(s.createFeed))
+	mux.HandleFunc("POST /feeds/refresh", s.withSession(s.refreshAllFeeds))
+	mux.HandleFunc("POST /feeds/{id}/refresh", s.withSession(s.refreshFeed))
+	mux.HandleFunc("POST /feeds/{id}/settings", s.withSession(s.feedSettings))
 	mux.HandleFunc("POST /feeds/{id}/delete", s.withSession(s.deleteFeed))
 	mux.HandleFunc("GET /save", s.withSession(s.newSave))
 	mux.HandleFunc("POST /save", s.withSession(s.saveURL))
@@ -901,6 +906,24 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, _ string) {
 	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
 }
 
+var refreshIntervals = []struct {
+	Seconds int
+	Label   string
+}{
+	{900, "Every 15 minutes"}, {1800, "Every 30 minutes"}, {3600, "Every hour"},
+	{10800, "Every 3 hours"}, {21600, "Every 6 hours"}, {43200, "Every 12 hours"}, {86400, "Once a day"},
+}
+
+func intervalLabel(d time.Duration) string {
+	secs := int(d.Seconds())
+	for _, o := range refreshIntervals {
+		if o.Seconds == secs {
+			return o.Label
+		}
+	}
+	return fmt.Sprintf("Every %d min", secs/60)
+}
+
 func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
 	feeds, err := s.store.AllFeeds(r.Context())
 	if err != nil {
@@ -908,32 +931,116 @@ func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	token := template.HTMLEscapeString(csrf(r))
+	notice := ""
+	if r.URL.Query().Get("refreshed") == "1" {
+		notice = `<p class="note">Refreshed.</p>`
+	}
 	var b strings.Builder
 	b.WriteString(dashboardToolbar)
-	b.WriteString(`<h1>Feeds</h1><p class="subtitle">Your subscriptions.</p><p><a class="button" href="/feeds/new">Add a feed</a> <a class="button" href="/?view=feeds">Browse feed items</a></p>`)
+	b.WriteString(`<h1>Feeds</h1><p class="subtitle">Your subscriptions. They refresh automatically; each can be set below.</p>`)
+	b.WriteString(`<div class="bulk-actions"><a class="button" href="/feeds/new">Add a feed</a><a class="button" href="/?view=feeds">Browse feed items</a>`)
+	if len(feeds) > 0 {
+		fmt.Fprintf(&b, `<form class="inline-action" method="post" action="/feeds/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh all now</button></form>`, token)
+	}
+	b.WriteString(`</div>`)
+	b.WriteString(notice)
 	if len(feeds) == 0 {
 		b.WriteString(`<p class="note">No feeds yet. Add one to start.</p>`)
 		s.render(w, "Feeds", b.String(), "")
 		return
 	}
-	b.WriteString(`<ul class="items">`)
+	b.WriteString(`<ul class="feed-list">`)
 	for _, f := range feeds {
 		title := f.Title
 		if title == "" {
 			title = f.URL
 		}
-		meta := `<span class="feed-url">` + template.HTMLEscapeString(f.URL) + `</span>`
+		meta := `<span class="feed-url">` + template.HTMLEscapeString(f.URL) + `</span> &middot; ` + intervalLabel(f.RefreshInterval)
 		if f.Disabled {
 			meta += ` <span class="badge broken">Disabled</span>`
 		}
 		if f.LastError != "" {
-			meta += ` <span class="badge broken">Error</span>`
+			meta += ` <span class="badge broken">` + template.HTMLEscapeString(truncate(f.LastError, 60)) + `</span>`
 		}
-		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s</a><div class="item-meta">%s</div></div><form class="inline-action" method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button>Unsubscribe</button></form></li>`,
-			template.HTMLEscapeString(f.URL), template.HTMLEscapeString(title), meta, f.ID, token)
+		options := ""
+		for _, o := range refreshIntervals {
+			sel := ""
+			if o.Seconds == int(f.RefreshInterval.Seconds()) {
+				sel = " selected"
+			}
+			options += fmt.Sprintf(`<option value="%d"%s>%s</option>`, o.Seconds, sel, o.Label)
+		}
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><button class="primary">Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
+			template.HTMLEscapeString(f.URL), template.HTMLEscapeString(title), meta,
+			f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), f.ID, token)
 	}
 	b.WriteString(`</ul>`)
 	s.render(w, "Feeds", b.String(), "")
+}
+
+func checkedAttr(on bool) string {
+	if on {
+		return " checked"
+	}
+	return ""
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+func (s *Server) refreshFeed(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if s.cfg.Feeds == nil {
+		s.internalError(w, errors.New("feed service is not configured"))
+		return
+	}
+	// A manual refresh is the user retrying, so re-enable an auto-disabled feed.
+	if err := s.store.EnableFeed(r.Context(), id); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	feed, err := s.store.Feed(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	_ = s.cfg.Feeds.RefreshFeed(r.Context(), feed)
+	http.Redirect(w, r, "/feeds?refreshed=1", http.StatusSeeOther)
+}
+
+func (s *Server) refreshAllFeeds(w http.ResponseWriter, r *http.Request, _ string) {
+	if s.cfg.Feeds == nil {
+		s.internalError(w, errors.New("feed service is not configured"))
+		return
+	}
+	_ = s.cfg.Feeds.RefreshAll(r.Context())
+	http.Redirect(w, r, "/feeds?refreshed=1", http.StatusSeeOther)
+}
+
+func (s *Server) feedSettings(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	seconds, _ := strconv.Atoi(r.FormValue("interval"))
+	if err := s.store.SetFeedRefresh(r.Context(), id, time.Duration(seconds)*time.Second, r.FormValue("fetch_full_content") == "1", r.FormValue("auto_snapshot") == "1"); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
 }
 
 func (s *Server) deleteFeed(w http.ResponseWriter, r *http.Request, _ string) {

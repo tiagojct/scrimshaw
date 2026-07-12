@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -218,5 +219,43 @@ func TestTagsAndDelete(t *testing.T) {
 	tags, _ = s.ItemTags(ctx, id)
 	if len(hs) != 0 || len(tags) != 0 {
 		t.Fatalf("delete should cascade: highlights=%d tags=%d", len(hs), len(tags))
+	}
+}
+
+func TestFeedSettingsAndReenable(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	fid, err := s.AddFeed(ctx, "https://feed.example/x", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Auto-disable it, then confirm it drops out of the due list.
+	if err := s.RecordFeedFailure(ctx, Feed{ID: fid}, errors.New("boom"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := s.Feed(ctx, fid); !f.Disabled {
+		t.Fatal("feed should be disabled after failure")
+	}
+
+	// Settings update.
+	if err := s.SetFeedRefresh(ctx, fid, 6*time.Hour, true, false); err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.Feed(ctx, fid)
+	if err != nil || f.RefreshInterval != 6*time.Hour || !f.FetchFullContent || f.AutoSnapshot {
+		t.Fatalf("feed settings not applied: %+v err=%v", f, err)
+	}
+
+	// Re-enable clears the disabled state and last error.
+	if err := s.EnableFeed(ctx, fid); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ = s.Feed(ctx, fid); f.Disabled || f.LastError != "" {
+		t.Fatalf("re-enable should clear disabled and error: %+v", f)
 	}
 }

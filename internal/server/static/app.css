@@ -366,6 +366,30 @@ mark.hl { background: var(--gl-mark-bg); color: inherit; padding: 0 0.1em; borde
 .items li .inline-action button { font-size: 0.85rem; padding: var(--gl-space-1) var(--gl-space-3); }
 .feed-url { word-break: break-all; }
 
+/* Feed management list */
+.feed-list li { padding: var(--gl-space-4) 0; border-bottom: 1px solid var(--gl-border-soft); }
+.feed-list .item-main { margin-bottom: var(--gl-space-3); }
+.feed-actions { display: flex; align-items: flex-start; gap: var(--gl-space-2); }
+.feed-actions .inline-action { margin: 0; }
+.feed-actions > form button, .feed-settings > summary { font-size: 0.85rem; padding: var(--gl-space-1) var(--gl-space-3); }
+.feed-settings { position: relative; }
+.feed-settings summary {
+  display: inline-block;
+  cursor: pointer;
+  padding: var(--gl-space-1) var(--gl-space-3);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  font-size: 0.85rem;
+  color: var(--gl-text);
+  list-style: none;
+}
+.feed-settings summary::-webkit-details-marker { display: none; }
+.feed-settings summary:hover { border-color: var(--gl-accent); }
+.feed-settings[open] > summary { border-color: var(--gl-accent); }
+.feed-settings .stacked { margin: var(--gl-space-3) 0; max-width: 28rem; }
+.feed-settings .stacked select { width: 100%; margin-top: var(--gl-space-1); }
+.feed-settings .stacked label { margin-bottom: var(--gl-space-3); }
+
 /* Danger zone (delete) */
 .danger { margin-top: var(--gl-space-8); }
 .danger summary { cursor: pointer; color: var(--gl-error); font-size: 0.9rem; }

@@ -179,6 +179,33 @@ func (s *Store) AddFeed(ctx context.Context, rawURL string, refresh time.Duratio
 	return id, tx.Commit()
 }
 
+func (s *Store) Feed(ctx context.Context, id int64) (Feed, error) {
+	var f Feed
+	var seconds, full, snapshot, disabled int
+	err := s.DB.QueryRowContext(ctx, `SELECT id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled FROM feeds WHERE id=?`, id).
+		Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &full, &snapshot, &disabled)
+	f.RefreshInterval, f.FetchFullContent, f.AutoSnapshot, f.Disabled = time.Duration(seconds)*time.Second, full != 0, snapshot != 0, disabled != 0
+	return f, err
+}
+
+// SetFeedRefresh updates a feed's polling interval and content options. The
+// interval is clamped to at least a minute.
+func (s *Store) SetFeedRefresh(ctx context.Context, id int64, refresh time.Duration, fetchFull, autoSnapshot bool) error {
+	if refresh < time.Minute {
+		refresh = time.Hour
+	}
+	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET refresh_interval_seconds=?, fetch_full_content=?, auto_snapshot=? WHERE id=?",
+		int(refresh.Seconds()), fetchFull, autoSnapshot, id)
+	return err
+}
+
+// EnableFeed clears the disabled state and failure count, used before a manual
+// retry of a feed that auto-disabled.
+func (s *Store) EnableFeed(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET disabled=0, consecutive_failures=0, last_error=NULL WHERE id=?", id)
+	return err
+}
+
 func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]Feed, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled
 		FROM feeds WHERE disabled = 0 AND (last_fetched IS NULL OR datetime(last_fetched, '+' || refresh_interval_seconds || ' seconds') <= datetime(?))`, now.UTC().Format(time.RFC3339))

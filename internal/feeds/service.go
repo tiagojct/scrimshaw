@@ -40,6 +40,29 @@ func (s *Service) PollDue(ctx context.Context) error {
 	return nil
 }
 
+// RefreshFeed polls a single feed immediately, recording success or failure,
+// and returns the poll error (if any) so a caller can surface it.
+func (s *Service) RefreshFeed(ctx context.Context, feed store.Feed) error {
+	if err := s.pollOne(ctx, feed); err != nil {
+		s.Logger.Warn("manual feed refresh failed", "feed_id", feed.ID, "url", feed.URL, "error", err)
+		_ = s.Store.RecordFeedFailure(ctx, feed, err, s.DisableAfter)
+		return err
+	}
+	return nil
+}
+
+// RefreshAll polls every feed now, ignoring the schedule.
+func (s *Service) RefreshAll(ctx context.Context) error {
+	feeds, err := s.Store.AllFeeds(ctx)
+	if err != nil {
+		return err
+	}
+	for _, feed := range feeds {
+		_ = s.RefreshFeed(ctx, feed)
+	}
+	return nil
+}
+
 func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 	body, headers, err := s.Client.Get(ctx, feed.URL, feed.ETag, feed.LastModified)
 	if err != nil {
