@@ -58,10 +58,16 @@ func (s *Server) baseURL(r *http.Request) string {
 		}
 		candidate = scheme + "://" + r.Host
 	}
-	if u, err := url.Parse(candidate); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
-		return u.Scheme + "://" + u.Host
+	u, err := url.Parse(candidate)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
 	}
-	return ""
+	// The host comes from a request header when BaseURL is unset; reject anything
+	// that could break out of the HTML attribute or JS string it is embedded in.
+	if strings.ContainsAny(u.Host, "\"'<>\\ \t\n") {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 type Server struct {
@@ -620,6 +626,10 @@ func (s *Server) setReadState(w http.ResponseWriter, r *http.Request, _ string) 
 		return
 	}
 	state := r.FormValue("state")
+	if state != "read" && state != "unread" {
+		http.Error(w, "invalid read state", http.StatusBadRequest)
+		return
+	}
 	if err = s.store.SetReadState(r.Context(), id, state); err != nil {
 		s.internalError(w, err)
 		return
@@ -884,7 +894,10 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request, _ string) {
 			return
 		}
 		contentType = headers.Get("Content-Type")
-		if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		lower := strings.ToLower(contentType)
+		// SVG can carry scripts and is served same-origin; reject it rather than
+		// leaning only on the page CSP.
+		if !strings.HasPrefix(lower, "image/") || strings.Contains(lower, "svg") {
 			http.NotFound(w, r)
 			return
 		}
@@ -980,8 +993,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
 	fmt.Fprintf(&b, `<form method="post" action="/export/markdown"><input type="hidden" name="csrf_token" value="%s"><button>Export Markdown to the configured folder</button></form></section>`, token)
 	base := s.baseURL(r)
 	// A session-based bookmarklet: it opens the pre-filled save form, so no API
-	// token is ever embedded in the bookmark.
-	bookmarklet := "javascript:(function(){window.open('" + base + "/share?url='+encodeURIComponent(location.href)+'&amp;title='+encodeURIComponent(document.title),'scrimshaw','width=480,height=680');})();"
+	// token is ever embedded in the bookmark. baseURL already rejects hosts with
+	// attribute/JS-breaking characters; escape again as defense in depth.
+	escBase := template.HTMLEscapeString(base)
+	bookmarklet := "javascript:(function(){window.open('" + escBase + "/share?url='+encodeURIComponent(location.href)+'&amp;title='+encodeURIComponent(document.title),'scrimshaw','width=480,height=680');})();"
 	b.WriteString(`<section class="dash-section"><h2>Save from anywhere</h2>`)
 	if base != "" {
 		b.WriteString(`<p>Drag this to your bookmarks bar, then click it on any page to save that page (it uses your logged-in session, no token needed):</p>`)
@@ -1093,10 +1108,11 @@ func checkedAttr(on bool) string {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 func (s *Server) refreshFeed(w http.ResponseWriter, r *http.Request, _ string) {
@@ -1107,11 +1123,6 @@ func (s *Server) refreshFeed(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	if s.cfg.Feeds == nil {
 		s.internalError(w, errors.New("feed service is not configured"))
-		return
-	}
-	// A manual refresh is the user retrying, so re-enable an auto-disabled feed.
-	if err := s.store.EnableFeed(r.Context(), id); err != nil {
-		s.internalError(w, err)
 		return
 	}
 	feed, err := s.store.Feed(r.Context(), id)
@@ -1553,8 +1564,15 @@ func (s *Server) apiAddHighlight(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	if _, err := s.store.Item(r.Context(), id); errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "item not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		s.internalError(w, err)
+		return
+	}
 	if err := s.store.AddHighlight(r.Context(), id, request.Quote, request.Note, 0); err != nil {
-		http.Error(w, "a highlight needs text", http.StatusBadRequest)
+		http.Error(w, "a highlight needs selected text or a note", http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")

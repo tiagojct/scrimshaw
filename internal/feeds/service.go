@@ -41,8 +41,13 @@ func (s *Service) PollDue(ctx context.Context) error {
 }
 
 // RefreshFeed polls a single feed immediately, recording success or failure,
-// and returns the poll error (if any) so a caller can surface it.
+// and returns the poll error (if any) so a caller can surface it. A manual
+// refresh is a user retry, so it re-enables an auto-disabled feed first.
 func (s *Service) RefreshFeed(ctx context.Context, feed store.Feed) error {
+	if err := s.Store.EnableFeed(ctx, feed.ID); err != nil {
+		return err
+	}
+	feed.Disabled = false
 	if err := s.pollOne(ctx, feed); err != nil {
 		s.Logger.Warn("manual feed refresh failed", "feed_id", feed.ID, "url", feed.URL, "error", err)
 		_ = s.Store.RecordFeedFailure(ctx, feed, err, s.DisableAfter)

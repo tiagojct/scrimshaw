@@ -249,9 +249,16 @@ func (s *Store) InsertFeedItem(ctx context.Context, feedID int64, rawURL, title,
 	if err != nil {
 		return false, err
 	}
+	// With no body the content hash would reduce to a title-only value and
+	// wrongly collide with other bodiless same-title entries; leave it empty so
+	// dedup keys on canonical_url alone (the partial hash index skips '').
+	hash := ""
+	if strings.TrimSpace(text) != "" {
+		hash = contentHash(title, text)
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO items(url, canonical_url, content_hash, title, author, source, feed_id, published_at, added_at, extracted_text)
 		VALUES (?, ?, ?, ?, ?, 'feed', ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		rawURL, canonical, contentHash(title, text), title, author, feedID, nullableTime(published), time.Now().UTC().Format(time.RFC3339), text)
+		rawURL, canonical, hash, title, author, feedID, nullableTime(published), time.Now().UTC().Format(time.RFC3339), text)
 	if err != nil {
 		tx.Rollback()
 		return false, err

@@ -40,6 +40,14 @@ func TestMigrationsCreateFTSAndDeduplicateItems(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("content duplicate insert: inserted=%v err=%v", inserted, err)
 	}
+	// Two distinct URLs sharing a title but with no body must both insert: a
+	// bodiless item's content hash must not collide on title alone.
+	if ins, err := s.InsertFeedItem(context.Background(), feedID, "https://a.example/1", "New post", "", "", time.Time{}); err != nil || !ins {
+		t.Fatalf("first bodiless item: inserted=%v err=%v", ins, err)
+	}
+	if ins, err := s.InsertFeedItem(context.Background(), feedID, "https://a.example/2", "New post", "", "", time.Time{}); err != nil || !ins {
+		t.Fatalf("second same-title bodiless item should still insert: inserted=%v err=%v", ins, err)
+	}
 	if err := s.SetSnapshot(context.Background(), 1, "/snapshots/1.html", "offline archive body"); err != nil {
 		t.Fatal(err)
 	}
