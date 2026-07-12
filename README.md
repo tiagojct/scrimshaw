@@ -1,65 +1,102 @@
 # Scrimshaw
 
-A single-user, self-hosted reader that keeps feeds, bookmarks, and read-it-later articles in one place and one datastore. It reads RSS, Atom, and JSON feeds, saves and archives links with an offline snapshot, and gives all three the same tags, the same search, and the same reader.
+A single-user, self-hosted reader that unifies an **RSS/Atom/JSON feed reader**, a **bookmarks archive**, and a **read-it-later reader** into one SQLite datastore and one server-rendered interface. All three are equal citizens: a feed entry, a saved bookmark, and a read-later article are the same underlying thing — a URL with fetched content, tags, states, highlights, and an optional offline snapshot.
 
 The name comes from the sailors' craft of etching lasting things from whalebone: a small, private archive you build over time.
 
-## Status
-
-In development, built in phases against the specification in SPEC.md. Not yet feature complete.
-
 ## Why it exists
 
-Miniflux, linkding, and readeck each do one of these jobs well, but they are three apps and three datastores. Scrimshaw treats a feed entry, a saved bookmark, and a read-it-later article as the same underlying thing, a URL with fetched content, a read state, tags, and an optional archived snapshot. One store, one interface.
+Miniflux, linkding, and readeck each do one of these jobs well, but they are three apps and three datastores. Scrimshaw keeps all of it in one place, with the same tags, the same full-text search, and the same reader across feeds, bookmarks, and saved articles. One store, one interface, one backup.
+
+## How it works
+
+Everything lives in a single `items` table. What distinguishes an item is a small set of flags, not a separate table:
+
+- **Source** — `feed` (from a subscription) or `manual` (you added it).
+- **Read later** — the reading queue. Ticking it fetches and extracts the full article for a clean reader view.
+- **Bookmarked** — the linklog. A link-only save, stored for reference.
+
+These are independent, so any item can be several things at once — you can bookmark a feed article *and* send it to read-later. On top of that each item carries **read/unread** (with a `read_at` timestamp), **starred**, **archived**, and **shared** states, flat **tags**, **highlights and notes**, and an optional **snapshot** (a self-contained HTML copy on disk).
+
+The interface is a set of views over that one table:
+
+| View | Shows |
+| --- | --- |
+| **Dashboard** | The home screen: counts (unread feeds, to-read, bookmarks, starred, highlights, broken links) and recent items per section |
+| **Feeds** | Your subscription firehose |
+| **Read Later** | The reading queue |
+| **Bookmarks** | Your linklog (kept even after reading) |
+| **Starred** | Favourites, across everything |
+| **Archived** | Things you're done with (still searchable) |
+| **All** | Everything |
+| **Highlights** | Every passage and note, across all items |
+
+**Reading files things away.** Marking an item read also archives it and stamps the time, so it leaves the active list and moves to Archived. Starred and Bookmarks are permanent collections — an item stays in them even after it's read.
 
 ## Features
 
 Reading
-- RSS, Atom, and JSON feeds with autodiscovery from a page URL
-- Clean reader view with adjustable typography, light and dark themes
-- Toggle between reader view, the original page, and the stored snapshot
+- RSS, Atom, and JSON feeds
+- A clean reader view (serif reading face, light and dark themes that follow your OS)
+- Toggle between the reader view, the original page, and the offline snapshot
+- Highlights: select any passage in an article to save it; add free-text notes
 - Keyboard-driven navigation in the miniflux idiom
-- Reading progress and reading-time estimate
 
-Saving and archiving
-- Save any page from a browser extension, a bookmarklet, or the mobile share sheet
-- Offline snapshot stored as a single self-contained HTML file on disk
-- Full-text search across titles, article text, and snapshots
-- Highlights and notes on articles
+Saving
+- Add a link and choose **Read later** (fetch the article) or **Bookmark** (store the link); the title is fetched automatically
+- Save from a bookmarklet, a browser extension, the iOS Share Sheet, the PWA, or the API (see below)
+- Offline snapshots stored as single, self-contained HTML files on disk
+- Full-text search across titles, article text, and snapshots, with the match highlighted in an excerpt
 
 Organization
-- Flat tags across feeds, bookmarks, and saved articles alike
-- Unread, starred, and archived states
-- Filter by tag, state, type, and search, combined
+- Flat tags shared across feeds, bookmarks, and saved articles; edit an item's tags in the reader
+- Filter by view, tag, and state; sort by newest, oldest, or unread-first
+- Bulk actions: mark selected read, archive selected
+- Delete an item permanently (removes its highlights, tags, and snapshot)
 
 Feeds that behave
-- Per-feed refresh intervals with conditional requests
-- Cross-post deduplication
-- Full-article fetch when a feed only sends an excerpt
-- Per-feed failure handling with backoff and auto-disable
+- Per-feed refresh interval (15 minutes to daily), configurable in the UI
+- Conditional requests (ETag / Last-Modified) and cross-post deduplication
+- Optional full-article fetch and auto-snapshot per feed
+- Failure handling with auto-disable after repeated errors; manual **Refresh** (single or all) that also revives a disabled feed
+- A dead-link checker that flags bookmarks whose URL no longer resolves
 
-Portability
-- OPML for feeds, JSON for a full export, Markdown for articles
+Publishing and portability
+- Share flag + a read-only API so you can drive a public linklog and a "read articles" page on your own website
+- Export everything as JSON, feeds as OPML, and articles as Markdown (one file per item with YAML frontmatter — title, URL, date — and the extracted content)
+- Import from Pocket, Instapaper, linkding, Readeck, and Netscape/browser bookmarks
 - Snapshots are plain HTML files you can read without the app
 
-## Technology
+## Saving from anywhere
 
-Go, compiled to a single static binary. SQLite with FTS5 for storage and search. Server-rendered HTML with HTMX; no SPA, no build step. gofeed for parsing, go-readability and obelisk for extraction and snapshots.
+Four ways to save a page, all listed under **Settings → Save from anywhere**:
 
-## Quick start with Docker
+- **Bookmarklet** — drag "Save to Scrimshaw" to your bookmarks bar. It opens the pre-filled save form using your logged-in session, so **no token is embedded** in the bookmark. Works on desktop and in iOS Safari (bookmark any page, then edit the bookmark's address to the snippet). Set `SCRIMSHAW_BASE_URL` so the snippet points at your real public origin.
+- **Browser extension** — `extension/` is an unpacked Manifest V3 extension for Chromium and Firefox. Create a **write** API token, load the folder as an unpacked extension, and set the server URL and token in its popup. It adds a toolbar button, a right-click **"Save to Scrimshaw"** menu (page or link, read-later or bookmark), and an `Alt+Shift+S` shortcut.
+- **iOS Shortcut** — a Shortcut that accepts URLs and POSTs to `/api/save` with a write token puts Scrimshaw in the native Share Sheet. Settings shows the exact request to build.
+- **PWA share target** — the app ships a web manifest and service worker; installed from a supported browser, a share opens the authenticated save form. (iOS Safari doesn't support share targets — use the Shortcut or bookmarklet there.)
+
+## Keyboard shortcuts
+
+In list views: `j` / `k` next / previous, `o` open the focused item, `/` focus search. `g` then `a` goes home, `g` then `f` opens the feed form.
+
+In the reader: `m` mark read, `s` star, `v` open the original. Select text to highlight it.
+
+## Install
+
+### Docker (recommended)
 
 ```yaml
-# docker-compose.yml
+# docker-compose.yml (ships in the repo; builds the image locally)
 services:
   scrimshaw:
-    image: ghcr.io/tiagojct/scrimshaw:latest
+    build: .
     ports:
       - "8080:8080"
     volumes:
       - ./data:/data
     environment:
-      SCRIMSHAW_BASE_URL: "https://scrimshaw.example.com"
-      SCRIMSHAW_TIMEZONE: "Europe/Lisbon"
+      SCRIMSHAW_BASE_URL: ${SCRIMSHAW_BASE_URL:-http://localhost:8080}
     restart: unless-stopped
 ```
 
@@ -67,60 +104,71 @@ services:
 docker compose up -d
 ```
 
-Open the app, complete the first-run setup to create your account, and add a feed or save your first link. The database and snapshots live under the mounted data volume.
+Open the app, complete the first-run setup to create your admin account (there is no default password), and add a feed or save your first link. The database and snapshots live under the mounted `./data` volume. Put Scrimshaw behind a TLS-terminating reverse proxy and set `SCRIMSHAW_BASE_URL` to its public HTTPS URL.
 
-## Configuration
-
-Configuration is by environment variable or a single config file. Common settings:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| SCRIMSHAW_ADDR | :8080 | Listen address and port |
-| SCRIMSHAW_BASE_URL | (none) | Public URL, used for the PWA and links |
-| SCRIMSHAW_DATA_DIR | /data | Holds the SQLite database and snapshots |
-| SCRIMSHAW_TIMEZONE | Europe/Lisbon | Timezone for displayed dates |
-| SCRIMSHAW_SESSION_SECRET | (generated) | Session cookie signing key |
-| SCRIMSHAW_AUTO_SNAPSHOT | off | Snapshot every feed item, not just saved ones |
-| SCRIMSHAW_DEFAULT_REFRESH | 60m | Default per-feed refresh interval |
-| SCRIMSHAW_FETCH_TIMEOUT | 30s | Per-request fetch timeout |
-| SCRIMSHAW_LOG_LEVEL | info | Logging verbosity |
-
-## Data and backups
-
-The SQLite database and the snapshots directory must sit on a persistent local disk, a bind mount or a local named volume, never a network filesystem, or you risk corruption and locking failures. Back up the database with SQLite's online backup rather than copying the file while it runs, and keep the snapshots directory in the same backup routine.
-
-To restore, stop Scrimshaw, restore the database and snapshots directory together to the data directory, then start it again. Do not replace a live SQLite file by copying over it.
-
-## Running without Docker
-
-Scrimshaw is a single binary, so you can also run it directly under systemd. A unit file example ships in the repository. Point SCRIMSHAW_DATA_DIR at a local directory and run.
-
-## Browser and mobile
-
-There are four ways to save a page, all listed under Settings:
-
-- **Bookmarklet** — drag "Save to Scrimshaw" to your bookmarks bar. It opens the pre-filled save form using your logged-in session, so no token is embedded. Works in desktop and iOS Safari (bookmark a page, then edit its address to the snippet).
-- **Browser extension** — `extension/` is an unpacked Manifest V3 extension for Chromium and Firefox. Create a write token, load the folder unpacked, and set the server URL and token in its popup. It adds a toolbar button, a right-click "Save to Scrimshaw" menu (page or link, read-later or bookmark), and an `Alt+Shift+S` shortcut.
-- **iOS Shortcut** — a Shortcut that accepts URLs and POSTs to `/api/save` with a write token puts Scrimshaw in the iOS Share Sheet. Settings shows the exact request.
-- **PWA share target** — the web app ships a manifest and service worker; installed from a supported browser, a share opens the authenticated save form.
-
-## Exports and API
-
-The web interface provides JSON and OPML downloads. Markdown files are exported to `data/exports/` by posting to `/export/markdown`. The token-authenticated save API is documented in [API.md](API.md).
-
-Imports currently support OPML feed subscriptions and Netscape bookmarks HTML. Bookmark folders are imported as flat tags.
-
-## Building from source
+### Binary
 
 ```sh
 go build -o scrimshaw ./cmd/scrimshaw
-./scrimshaw
+SCRIMSHAW_DATA_DIR=./data ./scrimshaw
 ```
+
+### systemd
+
+`scrimshaw.service` ships as a hardened example unit (`NoNewPrivileges`, `ProtectSystem=strict`, a dedicated user, and a `ReadWritePaths` data directory). Point `SCRIMSHAW_DATA_DIR` at a local directory and enable it.
+
+## Configuration
+
+Configuration is by environment variable:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SCRIMSHAW_ADDR` | `:8080` | Listen address and port |
+| `SCRIMSHAW_DATA_DIR` | `./data` (`/data` in Docker) | Holds the SQLite database, snapshots, image cache, and exports |
+| `SCRIMSHAW_BASE_URL` | (none) | Public origin. Used to build the bookmarklet and iOS snippet, and to decide the session cookie's `Secure` flag (off only for an `http://` value) |
+| `SCRIMSHAW_SESSION_SECRET` | (generated and persisted) | Base64url, at least 32 bytes. Set it to keep sessions valid across restarts on ephemeral filesystems |
+| `SCRIMSHAW_FETCH_TIMEOUT` | `30s` | Timeout for every outbound fetch (feeds, saves, images, link checks) |
+
+Per-feed settings (refresh interval, fetch-full-content, auto-snapshot) are configured in the UI under **Feeds**, not by environment variable. Auto-snapshot is off by default.
+
+## Data and backups
+
+The SQLite database and the snapshots directory must sit on **persistent local disk** — a bind mount or a local named volume, never a network filesystem, or you risk corruption and locking failures. Scrimshaw is the only process that should write to the database; don't run the `sqlite3` CLI or another tool against it while the app is running.
+
+Back up the database with SQLite's **online backup** or `VACUUM INTO` rather than copying the file while it runs, and keep the snapshots directory in the same routine. To restore: stop Scrimshaw, restore the database and snapshots together into the data directory, then start it again. Migrations run automatically on startup and are versioned and append-only.
+
+## Security
+
+- First run creates the admin account; there is no default password. Passwords are bcrypt-hashed with a 12-character minimum. Login is rate-limited with per-IP lockout.
+- Server-side sessions; cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` (unless the base URL is `http://` for local dev). CSRF tokens on every state-changing form.
+- Every fetched third-party page is sanitized (bluemonday) before it is rendered or snapshotted. Remote images are proxied and cached same-origin.
+- Every user- or feed-supplied URL goes through an SSRF guard (blocks loopback, private, link-local, and CGNAT ranges, dials the validated IP, caps redirects and response size) with a timeout.
+- API tokens are stored hashed, named, revocable, and scoped (`read` / `write`).
+
+## API
+
+A token-authenticated JSON API drives the extension, an Obsidian workflow, and a personal website. Create tokens under **API tokens** and choose scopes:
+
+- `read` — `GET /api/items`, `/api/feeds`, `/api/highlights`, `/api/search`, and `/api/shared` (the public linklog / reading log split by `?bookmarked=1` or `?read_later=1`).
+- `write` — `POST /api/save`, `/api/items/{id}/read` (marks read, stamps `read_at`), and `/api/items/{id}/highlights`.
+
+Items carry ISO-8601 dates (`added_at`, `published_at`, `read_at`) and a `kind` of `article` or `link`. Full details and examples are in [API.md](API.md).
+
+## Technology
+
+Go, compiled to a single static binary (`CGO_ENABLED=0`, scratch image). SQLite with FTS5 and WAL mode via the pure-Go `modernc.org/sqlite` driver. Server-rendered HTML with a little HTMX and vanilla JavaScript — no SPA, no bundler, no npm, no frontend build step. `mmcdole/gofeed` parses feeds, `go-shiori/go-readability` extracts articles, `microcosm-cc/bluemonday` sanitizes. The interface follows the [Glauca](https://github.com/tiagojct/glauca) design system (light-first, one restrained accent), served as embedded CSS/JS.
 
 ## For contributors and agents
 
-SPEC.md is the full build specification. CLAUDE.md holds the durable conventions and hard rules for working in this codebase.
+- `SPEC.md` — the full feature specification.
+- `CLAUDE.md` — durable conventions, invariants, and the hard rules for working in this codebase.
+
+```sh
+go build -o scrimshaw ./cmd/scrimshaw   # build
+go run ./cmd/scrimshaw                   # run locally
+go test ./...                            # test
+```
 
 ## License
 
-MIT.
+Code is MIT. See `LICENSE-MIT`.
