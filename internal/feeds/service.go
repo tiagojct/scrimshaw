@@ -46,7 +46,8 @@ func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 		return err
 	}
 	if body == nil {
-		return s.Store.RecordFeedSuccess(ctx, feed, feed.Title, headers.Get("ETag"), headers.Get("Last-Modified"))
+		// 304 Not Modified: keep the existing validators if the server omitted them.
+		return s.Store.RecordFeedSuccess(ctx, feed, feed.Title, firstNonEmpty(headers.Get("ETag"), feed.ETag), firstNonEmpty(headers.Get("Last-Modified"), feed.LastModified))
 	}
 	parsed, err := gofeed.NewParser().ParseString(string(body))
 	if err != nil {
@@ -80,22 +81,34 @@ func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 		if entry.Author != nil {
 			author = entry.Author.Name
 		}
+		// One malformed entry must not fail the whole poll and disable the feed.
 		inserted, err := s.Store.InsertFeedItem(ctx, feed.ID, entry.Link, entry.Title, author, text, publishedAt)
 		if err != nil {
-			return fmt.Errorf("store feed item: %w", err)
+			s.Logger.Warn("skipping feed item", "feed_id", feed.ID, "url", entry.Link, "error", err)
+			continue
 		}
 		if inserted && feed.AutoSnapshot && s.Snapshots != nil {
 			itemID, err := s.Store.ItemIDByURL(ctx, entry.Link)
 			if err != nil {
-				return fmt.Errorf("find newly inserted feed item: %w", err)
+				s.Logger.Warn("snapshot lookup failed", "feed_id", feed.ID, "url", entry.Link, "error", err)
+				continue
 			}
 			content := sanitize.HTML(text)
 			if err := s.Snapshots.SaveSnapshot(ctx, itemID, content, text); err != nil {
-				return fmt.Errorf("snapshot feed item: %w", err)
+				s.Logger.Warn("feed item snapshot failed", "feed_id", feed.ID, "item", itemID, "error", err)
 			}
 		}
 	}
-	return s.Store.RecordFeedSuccess(ctx, feed, parsed.Title, headers.Get("ETag"), headers.Get("Last-Modified"))
+	return s.Store.RecordFeedSuccess(ctx, feed, parsed.Title, firstNonEmpty(headers.Get("ETag"), feed.ETag), firstNonEmpty(headers.Get("Last-Modified"), feed.LastModified))
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *Service) extractFullContent(ctx context.Context, rawURL string) (string, error) {

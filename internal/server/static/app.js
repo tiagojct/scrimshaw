@@ -18,14 +18,13 @@ if ("serviceWorker" in navigator) {
       return;
     }
     if (e.key === "g") { awaitingG = true; }
-    else if (e.key === "/") { document.querySelector('input[type="search"], input')?.focus(); e.preventDefault(); }
+    else if (e.key === "/") { const s = document.querySelector('input[type="search"]'); if (s) { s.focus(); e.preventDefault(); } }
     else if (e.key === "j" && links.length) { cursor = Math.min(cursor + 1, links.length - 1); links[cursor].focus(); }
     else if (e.key === "k" && links.length) { cursor = Math.max(cursor - 1, 0); links[cursor].focus(); }
     else if (e.key === "o" && document.activeElement?.matches(".items li a")) { location.href = document.activeElement.href; }
     else if (e.key === "m") { document.querySelector(".read-form")?.requestSubmit(); }
     else if (e.key === "s") { document.querySelector(".star-form")?.requestSubmit(); }
     else if (e.key === "v") { document.querySelector(".original-link")?.click(); }
-    else if (e.key === "a") { document.querySelector(".archive-form")?.requestSubmit(); }
   });
 })();
 

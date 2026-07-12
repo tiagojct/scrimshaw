@@ -119,6 +119,10 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+const setupBody = `<div class="form-page auth"><h1>Welcome to Scrimshaw</h1><p class="subtitle">Create your account to get started.</p><form method="post"><label>Password (at least 12 characters) <input type="password" name="password" required minlength="12" autofocus></label><button class="primary">Create account</button></form></div>`
+
+const loginBody = `<div class="form-page auth"><h1>Sign in</h1><form method="post"><label>Password <input type="password" name="password" required autofocus></label><button class="primary">Log in</button></form></div>`
+
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	_, err := s.store.UserPasswordHash(r.Context())
 	if err == nil {
@@ -130,12 +134,12 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		s.render(w, "Setup", `<form method="post"><label>Password <input type="password" name="password" required minlength="12" autofocus></label><button>Create account</button></form>`, "")
+		s.render(w, "Setup", setupBody, "")
 		return
 	}
 	password := r.FormValue("password")
 	if len(password) < 12 {
-		s.render(w, "Setup", "", "Password must contain at least 12 characters.")
+		s.render(w, "Setup", setupBody, "Password must contain at least 12 characters.")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -152,7 +156,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		s.render(w, "Login", `<form method="post"><label>Password <input type="password" name="password" required autofocus></label><button>Log in</button></form>`, "")
+		s.render(w, "Login", loginBody, "")
 		return
 	}
 	address, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -162,13 +166,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !allowed {
-		s.render(w, "Login", "", "Too many login attempts. Try again later.")
+		s.render(w, "Login", loginBody, "Too many login attempts. Try again later.")
 		return
 	}
 	hash, err := s.store.UserPasswordHash(r.Context())
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(r.FormValue("password"))) != nil {
 		_ = s.store.RecordLoginFailure(r.Context(), address)
-		s.render(w, "Login", "", "Invalid credentials.")
+		s.render(w, "Login", loginBody, "Invalid credentials.")
 		return
 	}
 	if err := s.store.ClearLoginFailures(r.Context(), address); err != nil {
@@ -255,11 +259,14 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 
-	// Preserve the active view (and sort) across pagination and tag filters.
+	// Preserve the active view, sort, and tag across pagination.
 	link := func(extra url.Values) string {
 		q := url.Values{"view": {v.key}}
 		if sort != "" {
 			q.Set("sort", sort)
+		}
+		if tag != "" {
+			q.Set("tag", tag)
 		}
 		for key, values := range extra {
 			q[key] = values
@@ -269,16 +276,21 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 
 	var b strings.Builder
 	b.WriteString(dashboardToolbar)
-	b.WriteString(`<nav class="views">`)
+	b.WriteString(`<nav class="views" aria-label="Views">`)
 	for _, item := range viewOrder {
 		b.WriteString(viewTab("/?view="+item.key, item.label, item.key, v.key))
 	}
 	b.WriteString(`</nav>`)
-	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form></div>`,
-		template.HTMLEscapeString(v.key),
+	fmt.Fprintf(&b, `<h1 class="view-title">%s</h1>`, v.label)
+	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><input type="hidden" name="tag" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form></div>`,
+		template.HTMLEscapeString(v.key), template.HTMLEscapeString(tag),
 		optionTag("", "Newest", sort), optionTag("oldest", "Oldest", sort), optionTag("unread", "Unread first", sort))
 	if tag != "" {
-		fmt.Fprintf(&b, `<p class="tagbar">Tag: %s &middot; <a href="%s">clear</a></p>`, template.HTMLEscapeString(tag), link(nil))
+		clear := "/?view=" + url.QueryEscape(v.key)
+		if sort != "" {
+			clear += "&sort=" + url.QueryEscape(sort)
+		}
+		fmt.Fprintf(&b, `<p class="tagbar">Tag: %s &middot; <a href="%s">clear</a></p>`, template.HTMLEscapeString(tag), clear)
 	} else if len(tagCounts) > 0 {
 		b.WriteString(`<p class="tagbar">Unread tags: `)
 		for _, count := range tagCounts {
@@ -318,12 +330,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		if item.Author != "" {
 			meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
 		}
-		if rel := relativeTime(item.AddedAt); rel != "" {
-			meta += `<time>` + rel + `</time>`
-		}
+		meta += timeTag(item.AddedAt)
 		meta += badges
-		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select item"><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
-			classes, item.ID, item.ID, template.HTMLEscapeString(item.Title), meta)
+		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select %s"><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
+			classes, item.ID, template.HTMLEscapeString(item.Title), item.ID, template.HTMLEscapeString(item.Title), meta)
 	}
 	b.WriteString(`</ul><div class="bulk-actions"><button name="action" value="read">Mark selected read</button><button name="action" value="archive">Archive selected</button></div></form>`)
 	if options.Page > 1 || options.Page*options.PerPage < total {
@@ -340,7 +350,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, v.label, b.String(), "")
 }
 
-const dashboardToolbar = `<nav class="toolbar"><a href="/save">Add a link</a><a href="/feeds/new">Add a feed</a><a href="/highlights">Highlights</a><a href="/settings">Settings</a></nav>`
+const dashboardToolbar = `<nav class="toolbar" aria-label="Sections"><a href="/feeds/new">Add a feed</a><a href="/highlights">Highlights</a><a href="/settings">Settings</a></nav>`
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) {
 	st, err := s.store.Stats(r.Context())
@@ -392,9 +402,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 			if item.Author != "" {
 				meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
 			}
-			if rel := relativeTime(item.AddedAt); rel != "" {
-				meta += `<time>` + rel + `</time>`
-			}
+			meta += timeTag(item.AddedAt)
 			if linkBroken(item) {
 				meta += ` <span class="badge broken">Broken link</span>`
 			}
@@ -423,7 +431,7 @@ var viewOrder = []itemView{
 	{key: "bookmarks", label: "Bookmarks", bookmarked: "1", includeArchived: true, empty: "No bookmarks yet. Add a link, or bookmark a feed item.", showSource: true},
 	{key: "starred", label: "Starred", state: "starred", empty: "No starred items yet.", showSource: true},
 	{key: "archived", label: "Archived", state: "archived", empty: "Nothing archived. Reading an item files it here.", showSource: true},
-	{key: "all", label: "All", empty: "Nothing here yet.", showSource: true},
+	{key: "all", label: "All", includeArchived: true, empty: "Nothing here yet.", showSource: true},
 }
 
 var viewsByKey = func() map[string]itemView {
@@ -601,7 +609,9 @@ func (s *Server) archive(w http.ResponseWriter, r *http.Request, _ string) {
 // safeReturn accepts only same-origin absolute paths, guarding against open
 // redirects via an attacker-supplied return value.
 func safeReturn(dest string) string {
-	if strings.HasPrefix(dest, "/") && !strings.HasPrefix(dest, "//") {
+	// Require a same-origin absolute path. Reject "//host" and "/\host", which
+	// browsers normalize to protocol-relative off-site navigations.
+	if strings.HasPrefix(dest, "/") && !strings.HasPrefix(dest, "//") && !strings.HasPrefix(dest, "/\\") {
 		return dest
 	}
 	return "/"
@@ -674,8 +684,7 @@ func (s *Server) highlight(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	if err := s.store.AddHighlight(r.Context(), id, r.FormValue("quote"), r.FormValue("note"), 0); err != nil {
-		s.render(w, "Highlight", "", "A note needs some text.")
-		return
+		s.log.Warn("add highlight failed", "item", id, "error", err)
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
@@ -705,15 +714,20 @@ func (s *Server) snapshot(w http.ResponseWriter, r *http.Request, _ string) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
 	http.ServeContent(w, r, filepath.Base(item.SnapshotPath.String), info.ModTime(), file)
 }
+func searchFormBody(query string) string {
+	return dashboardToolbar + `<h1>Search</h1><div class="filters"><form action="/search"><label>Search <input name="q" type="search" value="` + template.HTMLEscapeString(query) + `" autofocus placeholder="Titles, article text, snapshots"></label><button class="primary">Search</button></form></div>`
+}
+
 func (s *Server) search(w http.ResponseWriter, r *http.Request, _ string) {
 	query := r.URL.Query().Get("q")
 	items, err := s.store.Search(r.Context(), query)
 	if err != nil {
-		s.render(w, "Search", "", "Search query is invalid.")
+		s.render(w, "Search", searchFormBody(query), "Search query is invalid.")
 		return
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" value="%s" autofocus></label><button>Search</button></form></div><ul class="items">`, template.HTMLEscapeString(query))
+	b.WriteString(searchFormBody(query))
+	b.WriteString(`<ul class="items">`)
 	for _, item := range items {
 		meta := ""
 		if item.Author != "" {
@@ -742,7 +756,10 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request, _ string) {
 	body, err := os.ReadFile(path)
 	contentType := ""
 	if errors.Is(err, os.ErrNotExist) {
-		body, headers, err := s.cfg.Fetcher.GetMedia(r.Context(), rawURL)
+		var headers http.Header
+		// Assign the outer body/err (no ':='), or the response would be empty on
+		// the first, cache-miss request.
+		body, headers, err = s.cfg.Fetcher.GetMedia(r.Context(), rawURL)
 		if err != nil {
 			http.NotFound(w, r)
 			return
@@ -801,8 +818,8 @@ func (s *Server) highlights(w http.ResponseWriter, r *http.Request, _ string) {
 		if title == "" {
 			title = "Untitled"
 		}
-		fmt.Fprintf(&b, `<p class="hl-source"><a href="/items/%d">%s</a><time>%s</time></p></article>`,
-			h.ItemID, template.HTMLEscapeString(title), relativeTime(h.CreatedAt))
+		fmt.Fprintf(&b, `<p class="hl-source"><a href="/items/%d">%s</a>%s</p></article>`,
+			h.ItemID, template.HTMLEscapeString(title), timeTag(h.CreatedAt))
 	}
 	b.WriteString(`</div>`)
 	s.render(w, "Highlights", b.String(), "")
@@ -819,11 +836,20 @@ func (s *Server) bulk(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		ids = append(ids, id)
 	}
+	// Return to the list the action was invoked from.
+	back := "/"
+	if ref, err := url.Parse(r.Referer()); err == nil && ref.Path != "" {
+		back = ref.Path
+		if ref.RawQuery != "" {
+			back += "?" + ref.RawQuery
+		}
+		back = safeReturn(back)
+	}
 	if err := s.store.BulkUpdate(r.Context(), ids, r.FormValue("action")); err != nil {
-		s.render(w, "Items", "", "Select one or more items and an action.")
+		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
 	token := template.HTMLEscapeString(csrf(r))
@@ -838,20 +864,25 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, "Settings", b.String(), "")
 }
 
+func feedFormBody(csrfToken string) string {
+	return dashboardToolbar + `<div class="form-page"><h1>Add a feed</h1><form class="stacked" method="post" action="/feeds"><input type="hidden" name="csrf_token" value="` + csrfToken +
+		`"><label>Feed URL <input type="url" name="url" required autofocus placeholder="https://example.com/feed.xml"></label><label>Tags <input name="tags" placeholder="comma-separated, optional"></label><button class="primary">Subscribe</button></form></div>`
+}
+
 func (s *Server) newFeed(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "Subscribe", `<form method="post" action="/feeds"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Feed URL <input type="url" name="url" required autofocus></label><label>Tags, comma-separated <input name="tags"></label><button>Subscribe</button></form>`, "")
+	s.render(w, "Add a feed", feedFormBody(template.HTMLEscapeString(csrf(r))), "")
 }
 func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, _ string) {
 	_, err := s.store.AddFeed(r.Context(), r.FormValue("url"), time.Hour, strings.Split(r.FormValue("tags"), ","))
 	if err != nil {
 		s.log.Warn("feed subscription failed", "error", err)
-		s.render(w, "Subscribe", "", "Could not subscribe. Check that the URL is valid.")
+		s.render(w, "Add a feed", feedFormBody(template.HTMLEscapeString(csrf(r))), "Could not subscribe. Check that the URL is valid.")
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?view=feeds", http.StatusSeeOther)
 }
 func saveForm(csrfToken, rawURL string) string {
-	return `<div class="form-page"><h1>Add a link</h1>` +
+	return dashboardToolbar + `<div class="form-page"><h1>Add a link</h1>` +
 		`<form class="stacked" method="post" action="/save"><input type="hidden" name="csrf_token" value="` + csrfToken + `">` +
 		`<label>URL <input type="url" name="url" required autofocus placeholder="https://example.com/article" value="` + template.HTMLEscapeString(rawURL) + `"></label>` +
 		`<label>Tags <input name="tags" placeholder="comma-separated, optional"></label>` +
@@ -867,20 +898,25 @@ func (s *Server) newSave(w http.ResponseWriter, r *http.Request, _ string) {
 func (s *Server) share(w http.ResponseWriter, r *http.Request, _ string) {
 	rawURL := r.URL.Query().Get("url")
 	if err := fetch.ValidateURL(rawURL); err != nil {
-		s.render(w, "Add a link", "", "The shared URL is invalid.")
+		s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), ""), "The shared URL is invalid.")
 		return
 	}
 	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL), "")
 }
 
+func tokensFormBody(csrfToken string) string {
+	return dashboardToolbar + `<div class="form-page"><h1>API tokens</h1><form class="stacked" method="post" action="/tokens"><input type="hidden" name="csrf_token" value="` + csrfToken +
+		`"><label>Name <input name="name" required placeholder="e.g. Obsidian, Website"></label><fieldset class="choice"><legend>Scopes</legend><label class="radio"><input type="checkbox" name="scope" value="read" checked><span><strong>Read</strong><small>Retrieve items, highlights, and the shared linklog.</small></span></label><label class="radio"><input type="checkbox" name="scope" value="write"><span><strong>Write</strong><small>Save pages, mark read, and add highlights.</small></span></label></fieldset><button class="primary">Create token</button></form><p class="note">Give an Obsidian plugin a read+write token; give your website a read-only token.</p></div>`
+}
+
 func (s *Server) tokens(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "API tokens", `<form method="post" action="/tokens"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Name <input name="name" required></label><fieldset><legend>Scopes</legend><label><input type="checkbox" name="scope" value="read" checked> Read (retrieve items and highlights)</label><label><input type="checkbox" name="scope" value="write"> Write (save pages, mark read, add highlights)</label></fieldset><button>Create token</button></form><p class="note">Give an Obsidian plugin a read+write token; give your website a read-only token for the shared linklog.</p>`, "")
+	s.render(w, "API tokens", tokensFormBody(template.HTMLEscapeString(csrf(r))), "")
 }
 
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request, _ string) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		s.render(w, "API tokens", "", "Token name is required.")
+		s.render(w, "API tokens", tokensFormBody(template.HTMLEscapeString(csrf(r))), "Token name is required.")
 		return
 	}
 	var scopes []string
@@ -890,7 +926,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 	}
 	if len(scopes) == 0 {
-		s.render(w, "API tokens", "", "Select at least one scope.")
+		s.render(w, "API tokens", tokensFormBody(template.HTMLEscapeString(csrf(r))), "Select at least one scope.")
 		return
 	}
 	token, err := randomToken(32)
@@ -903,7 +939,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, _ string) {
 		s.internalError(w, err)
 		return
 	}
-	s.render(w, "API token", `<p>Copy this token now. It will not be shown again. Scopes: `+template.HTMLEscapeString(strings.Join(scopes, ", "))+`</p><code>`+template.HTMLEscapeString(token)+`</code>`, "")
+	s.render(w, "API token", dashboardToolbar+`<div class="form-page"><h1>Token created</h1><p>Copy this token now. It will not be shown again. Scopes: `+template.HTMLEscapeString(strings.Join(scopes, ", "))+`</p><p><code class="token">`+template.HTMLEscapeString(token)+`</code></p></div>`, "")
 }
 
 func (s *Server) apiSave(w http.ResponseWriter, r *http.Request) {
@@ -1145,6 +1181,13 @@ func (s *Server) apiMarkRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
+	if _, err := s.store.Item(r.Context(), id); errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "item not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		s.internalError(w, err)
+		return
+	}
 	state := "unread"
 	if request.Read {
 		state = "read"
@@ -1222,53 +1265,63 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request, _ string
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func netscapeFormBody(csrfToken string) string {
+	return dashboardToolbar + `<div class="form-page"><h1>Import bookmarks</h1><form class="stacked" method="post" action="/import/netscape" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="` + csrfToken +
+		`"><label>Bookmarks HTML <input type="file" name="bookmarks" accept=".html,text/html" required></label><button class="primary">Import</button></form></div>`
+}
+
 func (s *Server) netscapeImportForm(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "Import bookmarks", `<form method="post" action="/import/netscape" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Bookmarks HTML <input type="file" name="bookmarks" accept=".html,text/html" required></label><button>Import</button></form>`, "")
+	s.render(w, "Import bookmarks", netscapeFormBody(template.HTMLEscapeString(csrf(r))), "")
 }
 
 func (s *Server) netscapeImport(w http.ResponseWriter, r *http.Request, _ string) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		http.Error(w, "invalid import", http.StatusBadRequest)
+		s.render(w, "Import bookmarks", netscapeFormBody(template.HTMLEscapeString(csrf(r))), "That upload was not valid.")
 		return
 	}
 	file, _, err := r.FormFile("bookmarks")
 	if err != nil {
-		http.Error(w, "bookmark file is required", http.StatusBadRequest)
+		s.render(w, "Import bookmarks", netscapeFormBody(template.HTMLEscapeString(csrf(r))), "Choose a bookmarks file to import.")
 		return
 	}
 	defer file.Close()
 	count, err := importers.NetscapeBookmarks(r.Context(), file, s.store)
 	if err != nil {
 		s.log.Warn("bookmark import failed", "error", err)
-		s.render(w, "Import bookmarks", "", "Could not import the bookmark file.")
+		s.render(w, "Import bookmarks", netscapeFormBody(template.HTMLEscapeString(csrf(r))), "Could not import the bookmark file.")
 		return
 	}
-	s.render(w, "Import bookmarks", `<p>Imported `+strconv.Itoa(count)+` bookmarks.</p>`, "")
+	s.render(w, "Import bookmarks", dashboardToolbar+`<h1>Import bookmarks</h1><p class="note">Imported `+strconv.Itoa(count)+` bookmarks.</p>`, "")
+}
+
+func importFormBody(csrfToken string) string {
+	return dashboardToolbar + `<div class="form-page"><h1>Import data</h1><form class="stacked" method="post" action="/import" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="` + csrfToken +
+		`"><label>Format <select name="format"><option value="netscape">Netscape bookmarks (Pocket, browsers)</option><option value="instapaper">Instapaper CSV</option><option value="linkding">Linkding JSON</option><option value="readeck">Readeck JSON</option><option value="opml">OPML feeds</option></select></label><label>File <input type="file" name="file" required></label><button class="primary">Import</button></form></div>`
 }
 
 func (s *Server) importForm(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "Import", `<form method="post" action="/import" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="`+template.HTMLEscapeString(csrf(r))+`"><label>Format <select name="format"><option value="netscape">Netscape bookmarks (Pocket, browsers)</option><option value="instapaper">Instapaper CSV</option><option value="linkding">Linkding JSON</option><option value="readeck">Readeck JSON</option><option value="opml">OPML feeds</option></select></label><label>File <input type="file" name="file" required></label><button>Import</button></form>`, "")
+	s.render(w, "Import data", importFormBody(template.HTMLEscapeString(csrf(r))), "")
 }
 
 func (s *Server) importFile(w http.ResponseWriter, r *http.Request, _ string) {
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		http.Error(w, "invalid import", http.StatusBadRequest)
+		s.render(w, "Import data", importFormBody(template.HTMLEscapeString(csrf(r))), "That upload was not valid.")
 		return
 	}
 	format := r.FormValue("format")
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "import file is required", http.StatusBadRequest)
+		s.render(w, "Import data", importFormBody(template.HTMLEscapeString(csrf(r))), "Choose a file to import.")
 		return
 	}
 	defer file.Close()
 	count, err := importers.Import(r.Context(), format, file, s.store)
 	if err != nil {
 		s.log.Warn("import failed", "format", format, "error", err)
-		s.render(w, "Import", "", "Could not import that file. Check the format and try again.")
+		s.render(w, "Import data", importFormBody(template.HTMLEscapeString(csrf(r))), "Could not import that file. Check the format and try again.")
 		return
 	}
-	s.render(w, "Import", `<p>Imported `+strconv.Itoa(count)+` items.</p>`, "")
+	s.render(w, "Import data", dashboardToolbar+`<h1>Import data</h1><p class="note">Imported `+strconv.Itoa(count)+` items.</p>`, "")
 }
 
 func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {
@@ -1287,7 +1340,7 @@ func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	if err != nil {
 		s.log.Warn("page save failed", "error", err)
-		s.render(w, "Add a link", "", "Could not save that URL. Check it and try again.")
+		s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL), "Could not save that URL. Check it and try again.")
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
@@ -1336,9 +1389,10 @@ func starButtonAttr(starred bool) string {
 	return ""
 }
 
-// linkBroken reports whether a stored link failed its last reachability check.
+// linkBroken reports whether a bookmarked link failed its last reachability
+// check. Only bookmarks are link-checked (matching Stats.BrokenLinks).
 func linkBroken(item store.Item) bool {
-	return (item.Bookmarked || item.Source == "manual") && (item.LinkStatus >= 400 || item.LinkStatus < 0)
+	return item.Bookmarked && (item.LinkStatus >= 400 || item.LinkStatus < 0)
 }
 
 // itemKindBadges renders the provenance and saved-state badges for an item:
@@ -1369,6 +1423,15 @@ func shortDate(v sql.NullString) string {
 		return ""
 	}
 	return t.Format("Jan 2, 2006")
+}
+
+// timeTag renders a machine-readable <time> element, or "" for a zero time.
+func timeTag(t time.Time) string {
+	rel := relativeTime(t)
+	if rel == "" {
+		return ""
+	}
+	return `<time datetime="` + t.UTC().Format(time.RFC3339) + `">` + rel + `</time>`
 }
 
 // relativeTime renders a compact age like "5m", "3h", "2d", or a date.

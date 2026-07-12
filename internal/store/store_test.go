@@ -96,10 +96,11 @@ func TestBookmarksReadLaterDatesAndLinkChecks(t *testing.T) {
 		t.Fatal("unread should clear read_at and unarchive")
 	}
 
-	// A never-checked link is due; recording a status clears it from the queue.
+	// Only bookmarks are link-checked. The bookmark is due; the read-later
+	// article is not. Recording a status clears the bookmark from the queue.
 	due, err := s.LinksToCheck(ctx, time.Now(), 10)
-	if err != nil || len(due) != 2 {
-		t.Fatalf("links to check = %d err=%v", len(due), err)
+	if err != nil || len(due) != 1 || due[0].ID != bookmarkID {
+		t.Fatalf("links to check = %+v err=%v", due, err)
 	}
 	if err := s.SetLinkStatus(ctx, bookmarkID, 404); err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func TestBookmarksReadLaterDatesAndLinkChecks(t *testing.T) {
 		t.Fatalf("link status not recorded: %+v", item)
 	}
 	due, err = s.LinksToCheck(ctx, time.Now().Add(-time.Hour), 10)
-	if err != nil || len(due) != 1 || due[0].ID != articleID {
+	if err != nil || len(due) != 0 {
 		t.Fatalf("after check, due = %+v err=%v", due, err)
 	}
 
@@ -127,5 +128,51 @@ func TestBookmarksReadLaterDatesAndLinkChecks(t *testing.T) {
 	shared, _, err := s.ListPage(ctx, ListOptions{Shared: "1", ReadLater: "0"})
 	if err != nil || len(shared) != 1 || shared[0].ID != bookmarkID {
 		t.Fatalf("shared linklog = %+v err=%v", shared, err)
+	}
+}
+
+func TestBookmarkDedupAndBulkRead(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Two different URLs with the same title must both save: a link-only
+	// bookmark's content hash must not collide on title alone.
+	a, err := s.InsertManualItem(ctx, "https://one.example/x", "Untitled", "", "", "", nil, false)
+	if err != nil {
+		t.Fatalf("first bookmark: %v", err)
+	}
+	b, err := s.InsertManualItem(ctx, "https://two.example/y", "Untitled", "", "", "", nil, false)
+	if err != nil {
+		t.Fatalf("same-title bookmark should still save: %v", err)
+	}
+	if a == b {
+		t.Fatal("distinct URLs returned the same id")
+	}
+	// The same URL is a real duplicate and must be rejected (not return a stale id).
+	if _, err := s.InsertManualItem(ctx, "https://one.example/x", "Untitled", "", "", "", nil, false); err == nil {
+		t.Fatal("duplicate URL should be rejected")
+	}
+
+	// Bulk mark-read mirrors single mark-read: it stamps read_at and archives.
+	if err := s.BulkUpdate(ctx, []int64{a}, "read"); err != nil {
+		t.Fatal(err)
+	}
+	item, _ := s.Item(ctx, a)
+	if item.ReadState != "read" || !item.Archived || !item.ReadAt.Valid {
+		t.Fatalf("bulk read should archive and stamp read_at: %+v", item)
+	}
+
+	// The "All" view: no filters plus IncludeArchived must not build an empty
+	// WHERE clause, and must return archived items too.
+	all, total, err := s.ListPage(ctx, ListOptions{IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("all view errored: %v", err)
+	}
+	if total != 2 || len(all) != 2 {
+		t.Fatalf("all view should return both items incl archived: total=%d len=%d", total, len(all))
 	}
 }

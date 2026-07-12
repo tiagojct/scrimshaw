@@ -38,6 +38,10 @@ dates and a `kind` of `article` or `link`:
 }
 ```
 
+The `content` field is the item's stored HTML as fetched from the source; it is
+sanitized when Scrimshaw renders it, but is returned to the API verbatim. A
+consumer that renders it (a website, an Obsidian note) must sanitize it first.
+
 Also read-scoped: `GET /api/feeds`, `GET /api/highlights` (each highlight has a
 `created_at`), and `GET /api/search?q=term`.
 

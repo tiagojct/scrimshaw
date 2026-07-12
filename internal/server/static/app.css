@@ -86,7 +86,8 @@ a { color: var(--gl-accent); text-decoration-thickness: 1px; text-underline-offs
 a:hover { color: var(--gl-accent-bright); }
 a:visited { color: var(--gl-visited); }
 
-:focus-visible { outline: none; box-shadow: var(--gl-focus-ring); border-radius: var(--gl-radius-sm); }
+:focus-visible { outline: 2px solid transparent; box-shadow: var(--gl-focus-ring); border-radius: var(--gl-radius-sm); }
+@media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }
 
 h1, h2, h3 { font-family: var(--gl-font-serif); font-weight: 600; letter-spacing: -0.014em; line-height: 1.12; text-wrap: balance; }
 h1 { font-size: clamp(1.9rem, 1.55rem + 1.6vw, 2.75rem); margin: 0 0 var(--gl-space-6); }
@@ -424,9 +425,9 @@ fieldset.choice legend { padding: 0; margin-bottom: var(--gl-space-2); color: va
 .radio span { display: flex; flex-direction: column; gap: 0.1rem; }
 .radio small { color: var(--gl-text-muted); }
 
-/* Centered auth pages (setup, login): a short form on its own */
-.container > form[method="post"]:only-child {
-  max-width: 22rem;
+/* Centered auth pages (setup, login) */
+.form-page.auth {
+  max-width: 24rem;
   margin: var(--gl-space-12) auto;
   padding: var(--gl-space-8);
   background: var(--gl-surface);
@@ -434,6 +435,20 @@ fieldset.choice legend { padding: 0; margin-bottom: var(--gl-space-2); color: va
   border-radius: var(--gl-radius);
   box-shadow: var(--gl-shadow);
 }
+.form-page.auth .subtitle { margin-bottom: var(--gl-space-6); }
+.view-title { margin-bottom: var(--gl-space-4); }
+code.token {
+  display: inline-block;
+  padding: var(--gl-space-2) var(--gl-space-3);
+  background: var(--gl-surface);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  font-family: var(--gl-font-mono);
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+/* Starred rows get a small marker even where the badge is hidden. */
+.items li.starred .item-main > a::before { content: "\2605\00a0"; color: var(--gl-warn); }
 
 /* Alerts */
 [role="alert"] {

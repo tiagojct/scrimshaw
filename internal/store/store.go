@@ -341,7 +341,10 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		where = append(where, "i.item_type=?")
 		args = append(args, options.ItemType)
 	}
-	condition := strings.Join(where, " AND ")
+	condition := "1=1"
+	if len(where) > 0 {
+		condition = strings.Join(where, " AND ")
+	}
 	var total int
 	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM items i WHERE "+condition, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -443,7 +446,7 @@ func (s *Store) SetShared(ctx context.Context, id int64, shared bool) error {
 // verified since `before`, oldest check first, for the dead-link checker.
 func (s *Store) LinksToCheck(ctx context.Context, before time.Time, limit int) ([]Item, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i
-		WHERE (i.bookmarked=1 OR i.source='manual') AND (i.link_checked_at IS NULL OR i.link_checked_at < ?)
+		WHERE i.bookmarked=1 AND (i.link_checked_at IS NULL OR i.link_checked_at < ?)
 		ORDER BY i.link_checked_at IS NOT NULL, i.link_checked_at LIMIT ?`,
 		before.UTC().Format(time.RFC3339), limit)
 	if err != nil {
@@ -588,22 +591,23 @@ func (s *Store) BulkUpdate(ctx context.Context, ids []int64, action string) erro
 	if len(ids) == 0 {
 		return errors.New("no items selected")
 	}
-	column, value := "", any(nil)
+	// set mirrors the single-item handlers: reading files an item away.
+	set, leadArgs := "", []any{}
 	switch action {
 	case "read":
-		column, value = "read_state", "read"
+		set = "read_state='read', read_at=COALESCE(read_at, ?), archived=1"
+		leadArgs = append(leadArgs, time.Now().UTC().Format(time.RFC3339))
 	case "archive":
-		column, value = "archived", true
+		set = "archived=1"
 	default:
 		return errors.New("invalid bulk action")
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, value)
+	args := append(leadArgs, make([]any, 0, len(ids))...)
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	_, err := s.DB.ExecContext(ctx, "UPDATE items SET "+column+"=? WHERE id IN ("+placeholders+")", args...)
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET "+set+" WHERE id IN ("+placeholders+")", args...)
 	return err
 }
 
@@ -612,7 +616,7 @@ func (s *Store) Search(ctx context.Context, query string) ([]Item, error) {
 	if query == "" {
 		return nil, nil
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.snapshot_path, i.feed_id, i.published_at, i.added_at
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+`
 		FROM items_fts f JOIN items i ON i.id=f.rowid WHERE items_fts MATCH ? ORDER BY rank LIMIT 100`, query)
 	if err != nil {
 		return nil, err
@@ -620,12 +624,10 @@ func (s *Store) Search(ctx context.Context, query string) ([]Item, error) {
 	defer rows.Close()
 	var items []Item
 	for rows.Next() {
-		var item Item
-		var added string
-		if err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName, &item.ExtractedText, &item.ReadState, &item.SnapshotPath, &item.FeedID, &item.PublishedAt, &added); err != nil {
+		item, err := scanItem(rows)
+		if err != nil {
 			return nil, err
 		}
-		item.AddedAt, _ = time.Parse(time.RFC3339, added)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -644,21 +646,33 @@ func (s *Store) InsertManualItem(ctx context.Context, rawURL, title, author, sit
 	if err != nil {
 		return 0, err
 	}
+	// A link-only bookmark has no content, so its content hash would collapse to
+	// a title-only value and wrongly collide with other titleless links; leave it
+	// empty so dedup relies on canonical_url alone (the partial hash index skips '').
+	hash := ""
+	if strings.TrimSpace(content) != "" {
+		hash = contentHash(title, content)
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO items(url, canonical_url, content_hash, title, author, site_name, source, item_type, read_later, bookmarked, added_at, extracted_text)
 		VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		rawURL, canonical, contentHash(title, content), title, author, siteName, itemType, readLaterFlag, bookmarkedFlag, time.Now().UTC().Format(time.RFC3339), content)
+		rawURL, canonical, hash, title, author, siteName, itemType, readLaterFlag, bookmarkedFlag, time.Now().UTC().Format(time.RFC3339), content)
 	if err != nil {
 		tx.Rollback()
 		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if affected == 0 {
+		tx.Rollback()
+		return 0, errors.New("item already exists")
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
 		tx.Rollback()
 		return 0, err
-	}
-	if id == 0 {
-		tx.Rollback()
-		return 0, errors.New("item already exists")
 	}
 	for _, name := range tags {
 		name = strings.TrimSpace(name)
