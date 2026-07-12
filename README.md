@@ -97,7 +97,12 @@ Scrimshaw is a single binary, so you can also run it directly under systemd. A u
 
 ## Browser and mobile
 
-`extension/` is an unpacked Manifest V3 extension for Chromium and Firefox. Create a save token in the application, load the directory as an unpacked extension, then configure the server URL and token in its popup. The web app includes a manifest, service worker, and share target; install it from a supported mobile browser and shares open the authenticated save form.
+There are four ways to save a page, all listed under Settings:
+
+- **Bookmarklet** — drag "Save to Scrimshaw" to your bookmarks bar. It opens the pre-filled save form using your logged-in session, so no token is embedded. Works in desktop and iOS Safari (bookmark a page, then edit its address to the snippet).
+- **Browser extension** — `extension/` is an unpacked Manifest V3 extension for Chromium and Firefox. Create a write token, load the folder unpacked, and set the server URL and token in its popup. It adds a toolbar button, a right-click "Save to Scrimshaw" menu (page or link, read-later or bookmark), and an `Alt+Shift+S` shortcut.
+- **iOS Shortcut** — a Shortcut that accepts URLs and POSTs to `/api/save` with a write token puts Scrimshaw in the iOS Share Sheet. Settings shows the exact request.
+- **PWA share target** — the web app ships a manifest and service worker; installed from a supported browser, a share opens the authenticated save form.
 
 ## Exports and API
 

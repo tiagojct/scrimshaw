@@ -38,12 +38,30 @@ import (
 type Config struct {
 	SessionSecret []byte
 	CookieSecure  bool
+	BaseURL       string
 	Saver         *reader.Saver
 	Feeds         *feeds.Service
 	SnapshotsDir  string
 	ImageCacheDir string
 	Fetcher       *fetch.Client
 	ExportDir     string
+}
+
+// baseURL returns the app's absolute origin (scheme://host), from the configured
+// base URL or, failing that, the request. Used to build bookmarklet/API snippets.
+func (s *Server) baseURL(r *http.Request) string {
+	candidate := s.cfg.BaseURL
+	if candidate == "" {
+		scheme := "http"
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			scheme = "https"
+		}
+		candidate = scheme + "://" + r.Host
+	}
+	if u, err := url.Parse(candidate); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return ""
 }
 
 type Server struct {
@@ -747,7 +765,14 @@ func searchFormBody(query string) string {
 var (
 	htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 	wordRe    = regexp.MustCompile(`[\p{L}\p{N}]+`)
+	urlInText = regexp.MustCompile(`https?://[^\s"'<>]+`)
 )
+
+// firstURL returns the first http(s) URL found in text, for share payloads that
+// pack the link into a free-text field.
+func firstURL(text string) string {
+	return urlInText.FindString(text)
+}
 
 func normalizeWord(w string) string {
 	return strings.ToLower(strings.Trim(w, ".,;:!?\"'’“”()[]{}—–…"))
@@ -953,6 +978,18 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
 	b.WriteString(`<section class="dash-section"><h2>Import</h2><p><a href="/import">Import data</a> from Pocket, Instapaper, linkding, Readeck, or a browser bookmarks file.</p></section>`)
 	b.WriteString(`<section class="dash-section"><h2>Export</h2><p>Download <a href="/export.json">everything as JSON</a> or <a href="/export.opml">feeds as OPML</a>.</p>`)
 	fmt.Fprintf(&b, `<form method="post" action="/export/markdown"><input type="hidden" name="csrf_token" value="%s"><button>Export Markdown to the configured folder</button></form></section>`, token)
+	base := s.baseURL(r)
+	// A session-based bookmarklet: it opens the pre-filled save form, so no API
+	// token is ever embedded in the bookmark.
+	bookmarklet := "javascript:(function(){window.open('" + base + "/share?url='+encodeURIComponent(location.href)+'&amp;title='+encodeURIComponent(document.title),'scrimshaw','width=480,height=680');})();"
+	b.WriteString(`<section class="dash-section"><h2>Save from anywhere</h2>`)
+	if base != "" {
+		b.WriteString(`<p>Drag this to your bookmarks bar, then click it on any page to save that page (it uses your logged-in session, no token needed):</p>`)
+		b.WriteString(`<p><a class="button bookmarklet" href="` + bookmarklet + `">Save to Scrimshaw</a></p>`)
+		b.WriteString(`<p class="note">On iOS Safari: bookmark any page, then edit that bookmark's address and paste the snippet above.</p>`)
+		fmt.Fprintf(&b, `<p><strong>iOS Shortcut</strong> (adds Scrimshaw to the Share Sheet): make a Shortcut that accepts URLs, then "Get Contents of URL" with method <code>POST</code> to <code>%s/api/save</code>, header <code>Authorization: Bearer &lt;your write token&gt;</code>, and JSON body <code>{"url": Shortcut Input, "read_later": true}</code>. Create the token under <a href="/tokens">API tokens</a> with the write scope.</p>`, template.HTMLEscapeString(base))
+	}
+	b.WriteString(`<p>The <strong>browser extension</strong> in <code>extension/</code> adds a toolbar button and a right-click "Save to Scrimshaw" menu.</p></section>`)
 	b.WriteString(`<section class="dash-section"><h2>API and integrations</h2><p><a href="/tokens">API tokens</a> for the browser extension, an Obsidian plugin, and publishing shared links to your website.</p></section>`)
 	fmt.Fprintf(&b, `<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="%s"><button>Log out</button></form>`, token)
 	s.render(w, "Settings", b.String(), "")
@@ -1165,11 +1202,11 @@ func (s *Server) deleteItem(w http.ResponseWriter, r *http.Request, _ string) {
 	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther)
 }
 
-func saveForm(csrfToken, rawURL string) string {
+func saveForm(csrfToken, rawURL, tags string) string {
 	return dashboardToolbar + `<div class="form-page"><h1>Add a link</h1>` +
 		`<form class="stacked" method="post" action="/save"><input type="hidden" name="csrf_token" value="` + csrfToken + `">` +
 		`<label>URL <input type="url" name="url" required autofocus placeholder="https://example.com/article" value="` + template.HTMLEscapeString(rawURL) + `"></label>` +
-		`<label>Tags <input name="tags" placeholder="comma-separated, optional"></label>` +
+		`<label>Tags <input name="tags" placeholder="comma-separated, optional" value="` + template.HTMLEscapeString(tags) + `"></label>` +
 		`<fieldset class="choice"><legend>How to save it</legend>` +
 		`<label class="radio"><input type="radio" name="read_later" value="1" checked><span><strong>Read later</strong><small>Fetch the full article so you can read and highlight it.</small></span></label>` +
 		`<label class="radio"><input type="radio" name="read_later" value="0"><span><strong>Bookmark</strong><small>Just store the link in your bookmarks and linklog.</small></span></label>` +
@@ -1177,15 +1214,22 @@ func saveForm(csrfToken, rawURL string) string {
 }
 
 func (s *Server) newSave(w http.ResponseWriter, r *http.Request, _ string) {
-	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), ""), "")
+	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), "", ""), "")
 }
+
+// share is the target for the bookmarklet, the PWA share sheet, and an iOS
+// Shortcut. Different sources put the URL in url, text, or title, so it looks
+// in all three and pre-fills the save form for the logged-in user.
 func (s *Server) share(w http.ResponseWriter, r *http.Request, _ string) {
-	rawURL := r.URL.Query().Get("url")
-	if err := fetch.ValidateURL(rawURL); err != nil {
-		s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), ""), "The shared URL is invalid.")
-		return
+	q := r.URL.Query()
+	rawURL := strings.TrimSpace(q.Get("url"))
+	if rawURL == "" {
+		rawURL = firstURL(q.Get("text"))
 	}
-	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL), "")
+	if rawURL == "" {
+		rawURL = firstURL(q.Get("title"))
+	}
+	s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL, q.Get("tags")), "")
 }
 
 func tokensFormBody(csrfToken string) string {
@@ -1624,7 +1668,7 @@ func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	if err != nil {
 		s.log.Warn("page save failed", "error", err)
-		s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL), "Could not save that URL. Check it and try again.")
+		s.render(w, "Add a link", saveForm(template.HTMLEscapeString(csrf(r)), rawURL, r.FormValue("tags")), "Could not save that URL. Check it and try again.")
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)

@@ -1,12 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Scrimshaw Save",
-  "version": "0.1.0",
-  "description": "Save the current page to Scrimshaw.",
-  "permissions": ["activeTab", "storage"],
+  "version": "0.2.0",
+  "description": "Save pages and links to Scrimshaw from a toolbar button, a right-click menu, or a keyboard shortcut.",
+  "permissions": ["activeTab", "storage", "contextMenus"],
   "host_permissions": ["*://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "Save to Scrimshaw",
     "default_popup": "popup.html"
+  },
+  "commands": {
+    "save-read-later": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Save the current page to Scrimshaw (read later)"
+    }
   }
 }

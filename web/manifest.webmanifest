@@ -3,8 +3,8 @@
   "short_name": "Scrimshaw",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f7f3e8",
-  "theme_color": "#273f4c",
+  "background_color": "#f0f4f6",
+  "theme_color": "#0b62cf",
   "share_target": {
     "action": "/share",
     "method": "GET",

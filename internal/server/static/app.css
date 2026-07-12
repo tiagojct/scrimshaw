@@ -479,16 +479,25 @@ fieldset.choice legend { padding: 0; margin-bottom: var(--gl-space-2); color: va
 }
 .form-page.auth .subtitle { margin-bottom: var(--gl-space-6); }
 .view-title { margin-bottom: var(--gl-space-4); }
+code {
+  font-family: var(--gl-font-mono);
+  font-size: 0.88em;
+  background: var(--gl-surface);
+  border: 1px solid var(--gl-border-soft);
+  border-radius: var(--gl-radius-sm);
+  padding: 0.05em 0.35em;
+  word-break: break-word;
+}
 code.token {
   display: inline-block;
   padding: var(--gl-space-2) var(--gl-space-3);
-  background: var(--gl-surface);
-  border: 1px solid var(--gl-border);
+  border-color: var(--gl-border);
   border-radius: var(--gl-radius);
-  font-family: var(--gl-font-mono);
   font-size: 0.9rem;
   word-break: break-all;
 }
+.bookmarklet { cursor: grab; }
+.bookmarklet:active { cursor: grabbing; }
 /* Starred rows get a small marker even where the badge is hidden. */
 .items li.starred .item-main > a::before { content: "\2605\00a0"; color: var(--gl-warn); }
 
