@@ -176,3 +176,47 @@ func TestBookmarkDedupAndBulkRead(t *testing.T) {
 		t.Fatalf("all view should return both items incl archived: total=%d len=%d", total, len(all))
 	}
 }
+
+func TestTagsAndDelete(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	id, err := s.InsertManualItem(ctx, "https://ex/a", "An item", "", "", "<p>body</p>", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SetItemTags replaces and de-duplicates (case-insensitively).
+	if err := s.SetItemTags(ctx, id, []string{"News", "tech", "news", "  "}); err != nil {
+		t.Fatal(err)
+	}
+	tags, err := s.ItemTags(ctx, id)
+	if err != nil || len(tags) != 2 {
+		t.Fatalf("tags after set = %v err=%v", tags, err)
+	}
+	if err := s.SetItemTags(ctx, id, []string{"solo"}); err != nil {
+		t.Fatal(err)
+	}
+	if tags, _ = s.ItemTags(ctx, id); len(tags) != 1 || tags[0] != "solo" {
+		t.Fatalf("tags should be replaced: %v", tags)
+	}
+
+	// Delete cascades to highlights and tags.
+	if err := s.AddHighlight(ctx, id, "quote", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteItem(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Item(ctx, id); err == nil {
+		t.Fatal("item should be gone")
+	}
+	hs, _ := s.HighlightsForItem(ctx, id)
+	tags, _ = s.ItemTags(ctx, id)
+	if len(hs) != 0 || len(tags) != 0 {
+		t.Fatalf("delete should cascade: highlights=%d tags=%d", len(hs), len(tags))
+	}
+}

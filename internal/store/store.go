@@ -298,6 +298,49 @@ func (s *Store) AllFeeds(ctx context.Context) ([]Feed, error) {
 	return feeds, rows.Err()
 }
 
+// DeleteFeed removes a subscription. Its items are kept (feed_id is set null by
+// the foreign key) so already-fetched reading is not lost.
+func (s *Store) DeleteFeed(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM feeds WHERE id=?", id)
+	return err
+}
+
+// DeleteItem permanently removes an item; highlights, tags, and the FTS row go
+// with it via cascades and triggers. The caller removes any snapshot file.
+func (s *Store) DeleteItem(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM items WHERE id=?", id)
+	return err
+}
+
+// SetItemTags replaces an item's tags with the given set.
+func (s *Store) SetItemTags(ctx context.Context, id int64, tags []string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM item_tags WHERE item_id=?", id); err != nil {
+		tx.Rollback()
+		return err
+	}
+	seen := map[string]bool{}
+	for _, name := range tags {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[strings.ToLower(name)] {
+			continue
+		}
+		seen[strings.ToLower(name)] = true
+		if _, err := tx.ExecContext(ctx, "INSERT INTO tags(name) VALUES (?) ON CONFLICT(name) DO NOTHING", name); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO item_tags(item_id, tag_id) SELECT ?, id FROM tags WHERE name=? COLLATE NOCASE", id, name); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int, error) {
 	if options.PerPage < 1 || options.PerPage > 100 {
 		options.PerPage = 50

@@ -77,9 +77,13 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items/{id}/readlater", s.withSession(s.readLaterItem))
 	mux.HandleFunc("POST /items/{id}/bookmark", s.withSession(s.bookmarkItem))
 	mux.HandleFunc("POST /items/{id}/highlights", s.withSession(s.highlight))
+	mux.HandleFunc("POST /items/{id}/tags", s.withSession(s.setTags))
+	mux.HandleFunc("POST /items/{id}/delete", s.withSession(s.deleteItem))
 	mux.HandleFunc("POST /items/bulk", s.withSession(s.bulk))
+	mux.HandleFunc("GET /feeds", s.withSession(s.feedsList))
 	mux.HandleFunc("GET /feeds/new", s.withSession(s.newFeed))
 	mux.HandleFunc("POST /feeds", s.withSession(s.createFeed))
+	mux.HandleFunc("POST /feeds/{id}/delete", s.withSession(s.deleteFeed))
 	mux.HandleFunc("GET /save", s.withSession(s.newSave))
 	mux.HandleFunc("POST /save", s.withSession(s.saveURL))
 	mux.HandleFunc("GET /share", s.withSession(s.share))
@@ -350,7 +354,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, v.label, b.String(), "")
 }
 
-const dashboardToolbar = `<nav class="toolbar" aria-label="Sections"><a href="/feeds/new">Add a feed</a><a href="/highlights">Highlights</a><a href="/settings">Settings</a></nav>`
+const dashboardToolbar = `<nav class="toolbar" aria-label="Sections"><a href="/feeds">Feeds</a><a href="/highlights">Highlights</a><a href="/settings">Settings</a></nav>`
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) {
 	st, err := s.store.Stats(r.Context())
@@ -545,6 +549,20 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/bookmark"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="bookmarked" value="%s"><button%s>%s</button></form>`, item.ID, token, bookmarkValue, starButtonAttr(item.Bookmarked), bookmarkLabel)
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/share"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="shared" value="%s"><button%s>%s</button></form>`, item.ID, token, shareValue, starButtonAttr(item.Shared), shareLabel)
 	b.WriteString(`</div>`)
+
+	// Tags editor.
+	tags, err := s.store.ItemTags(r.Context(), item.ID)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	tagLabel := "Tags"
+	if len(tags) > 0 {
+		tagLabel = "Tags: " + template.HTMLEscapeString(strings.Join(tags, ", "))
+	}
+	fmt.Fprintf(&b, `<details class="tags-edit"><summary>%s</summary><form method="post" action="/items/%d/tags"><input type="hidden" name="csrf_token" value="%s"><label>Comma-separated tags <input name="tags" value="%s"></label><button>Save tags</button></form></details>`,
+		tagLabel, item.ID, token, template.HTMLEscapeString(strings.Join(tags, ", ")))
+
 	// Selection popover and the hidden form it submits to create a highlight.
 	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
 	b.WriteString(`<section class="highlight-list"><h2>Highlights &amp; notes</h2>`)
@@ -566,6 +584,7 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 		b.WriteString(`<p class="note">Select any passage in the article to highlight it, or add a note below.</p>`)
 	}
 	fmt.Fprintf(&b, `<details class="manual-highlight"><summary>Add a note</summary><form method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="quote" value=""><label>Note <textarea name="note" rows="3" required placeholder="Your thoughts on this article"></textarea></label><button>Add note</button></form></details></section>`, item.ID, token)
+	fmt.Fprintf(&b, `<details class="danger"><summary>Delete this item</summary><p class="note">Permanently removes this item, its highlights, and its snapshot. This cannot be undone.</p><form method="post" action="/items/%d/delete"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="return" value="%s"><button class="danger-btn">Delete permanently</button></form></details>`, item.ID, token, template.HTMLEscapeString(backURL))
 	fmt.Fprintf(&b, `<script type="application/json" id="hl-data">%s</script>`, quotesJSON)
 	s.render(w, item.Title, b.String(), "")
 }
@@ -879,8 +898,96 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, _ string) {
 		s.render(w, "Add a feed", feedFormBody(template.HTMLEscapeString(csrf(r))), "Could not subscribe. Check that the URL is valid.")
 		return
 	}
-	http.Redirect(w, r, "/?view=feeds", http.StatusSeeOther)
+	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
 }
+
+func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
+	feeds, err := s.store.AllFeeds(r.Context())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	token := template.HTMLEscapeString(csrf(r))
+	var b strings.Builder
+	b.WriteString(dashboardToolbar)
+	b.WriteString(`<h1>Feeds</h1><p class="subtitle">Your subscriptions.</p><p><a class="button" href="/feeds/new">Add a feed</a> <a class="button" href="/?view=feeds">Browse feed items</a></p>`)
+	if len(feeds) == 0 {
+		b.WriteString(`<p class="note">No feeds yet. Add one to start.</p>`)
+		s.render(w, "Feeds", b.String(), "")
+		return
+	}
+	b.WriteString(`<ul class="items">`)
+	for _, f := range feeds {
+		title := f.Title
+		if title == "" {
+			title = f.URL
+		}
+		meta := `<span class="feed-url">` + template.HTMLEscapeString(f.URL) + `</span>`
+		if f.Disabled {
+			meta += ` <span class="badge broken">Disabled</span>`
+		}
+		if f.LastError != "" {
+			meta += ` <span class="badge broken">Error</span>`
+		}
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s</a><div class="item-meta">%s</div></div><form class="inline-action" method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button>Unsubscribe</button></form></li>`,
+			template.HTMLEscapeString(f.URL), template.HTMLEscapeString(title), meta, f.ID, token)
+	}
+	b.WriteString(`</ul>`)
+	s.render(w, "Feeds", b.String(), "")
+}
+
+func (s *Server) deleteFeed(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.DeleteFeed(r.Context(), id); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
+}
+
+func (s *Server) setTags(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.SetItemTags(r.Context(), id, strings.Split(r.FormValue("tags"), ",")); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+func (s *Server) deleteItem(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	item, err := s.store.Item(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	// Remove the snapshot file too, but only from inside the snapshots directory.
+	if item.SnapshotPath.Valid && s.cfg.SnapshotsDir != "" && filepath.Dir(item.SnapshotPath.String) == filepath.Clean(s.cfg.SnapshotsDir) {
+		_ = os.Remove(item.SnapshotPath.String)
+	}
+	if err := s.store.DeleteItem(r.Context(), id); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther)
+}
+
 func saveForm(csrfToken, rawURL string) string {
 	return dashboardToolbar + `<div class="form-page"><h1>Add a link</h1>` +
 		`<form class="stacked" method="post" action="/save"><input type="hidden" name="csrf_token" value="` + csrfToken + `">` +

@@ -355,6 +355,20 @@ mark.hl { background: var(--gl-mark-bg); color: inherit; padding: 0 0.1em; borde
 .highlight-list .note { color: var(--gl-text-muted); font-size: 0.95rem; margin: var(--gl-space-1) 0 0; }
 .manual-highlight { margin-top: var(--gl-space-6); }
 .manual-highlight summary { cursor: pointer; color: var(--gl-text-muted); font-size: 0.95rem; }
+
+/* Tags editor + inline row actions */
+.tags-edit { margin: var(--gl-space-4) 0; max-width: 44rem; }
+.tags-edit summary { cursor: pointer; color: var(--gl-text-muted); font-size: 0.9rem; }
+.tags-edit input { width: 100%; }
+.items li .inline-action { margin: 0; flex: none; }
+.items li .inline-action button { font-size: 0.85rem; padding: var(--gl-space-1) var(--gl-space-3); }
+.feed-url { word-break: break-all; }
+
+/* Danger zone (delete) */
+.danger { margin-top: var(--gl-space-8); }
+.danger summary { cursor: pointer; color: var(--gl-error); font-size: 0.9rem; }
+.danger-btn { border-color: var(--gl-error-line); color: var(--gl-error); }
+.danger-btn:hover { border-color: var(--gl-error-line); background: color-mix(in srgb, var(--gl-error-line) 12%, transparent); }
 .manual-highlight textarea { width: 100%; margin-top: var(--gl-space-1); resize: vertical; font-family: var(--gl-font-sans); }
 .highlight-list .note-only p {
   margin: 0;
