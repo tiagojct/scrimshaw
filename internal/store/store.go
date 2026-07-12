@@ -346,6 +346,47 @@ func (s *Store) DeleteItem(ctx context.Context, id int64) error {
 	return err
 }
 
+// SnapshotPaths returns the non-null snapshot_path of each given item, so a bulk
+// delete can clean up the files before dropping the rows.
+func (s *Store) SnapshotPaths(ctx context.Context, ids []int64) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.DB.QueryContext(ctx, "SELECT snapshot_path FROM items WHERE id IN ("+placeholders+") AND snapshot_path IS NOT NULL", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+// DeleteItems permanently removes the given items (cascades as DeleteItem).
+func (s *Store) DeleteItems(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM items WHERE id IN ("+placeholders+")", args...)
+	return err
+}
+
 // SetItemTags replaces an item's tags with the given set.
 func (s *Store) SetItemTags(ctx context.Context, id int64, tags []string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -668,14 +709,15 @@ func (s *Store) BulkUpdate(ctx context.Context, ids []int64, action string) erro
 	if len(ids) == 0 {
 		return errors.New("no items selected")
 	}
-	// set mirrors the single-item handlers: reading files an item away.
+	// set mirrors the single-item handlers: reading files an item away, unread
+	// brings it back.
 	set, leadArgs := "", []any{}
 	switch action {
 	case "read":
 		set = "read_state='read', read_at=COALESCE(read_at, ?), archived=1"
 		leadArgs = append(leadArgs, time.Now().UTC().Format(time.RFC3339))
-	case "archive":
-		set = "archived=1"
+	case "unread":
+		set = "read_state='unread', read_at=NULL, archived=0"
 	default:
 		return errors.New("invalid bulk action")
 	}

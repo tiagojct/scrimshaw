@@ -352,6 +352,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		if v.showSource {
 			badges += itemKindBadges(item)
 		}
+		// In the "Read" view every item is read, so the badge would be noise there.
+		if item.ReadState == "read" && v.key != "archived" {
+			badges += ` <span class="badge read">Read</span>`
+		}
 		if item.Starred {
 			badges += ` <span class="badge star">Starred</span>`
 		}
@@ -370,7 +374,13 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select %s"><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
 			classes, item.ID, template.HTMLEscapeString(item.Title), item.ID, template.HTMLEscapeString(item.Title), meta)
 	}
-	b.WriteString(`</ul><div class="bulk-actions"><button name="action" value="read">Mark selected read</button><button name="action" value="archive">Archive selected</button></div></form>`)
+	b.WriteString(`</ul><div class="bulk-actions">`)
+	if v.key == "archived" {
+		b.WriteString(`<button name="action" value="unread">Mark selected unread</button>`)
+	} else {
+		b.WriteString(`<button name="action" value="read">Mark selected read</button>`)
+	}
+	b.WriteString(`<button class="danger-btn" name="action" value="delete">Delete selected</button></div></form>`)
 	if options.Page > 1 || options.Page*options.PerPage < total {
 		b.WriteString(`<div class="pager">`)
 		if options.Page > 1 {
@@ -465,7 +475,7 @@ var viewOrder = []itemView{
 	{key: "later", label: "Read Later", readLater: "1", empty: "Nothing to read yet. Add a link, or send a feed item here with Read later.", showSource: true},
 	{key: "bookmarks", label: "Bookmarks", bookmarked: "1", includeArchived: true, empty: "No bookmarks yet. Add a link, or bookmark a feed item.", showSource: true},
 	{key: "starred", label: "Starred", state: "starred", empty: "No starred items yet.", showSource: true},
-	{key: "archived", label: "Archived", state: "archived", empty: "Nothing archived. Reading an item files it here.", showSource: true},
+	{key: "archived", label: "Read", state: "archived", empty: "Nothing read yet. Reading an item files it here; it stays in Bookmarks or Starred if it was one.", showSource: true},
 	{key: "all", label: "All", includeArchived: true, empty: "Nothing here yet.", showSource: true},
 }
 
@@ -519,8 +529,8 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	if item.Shared {
 		badges.WriteString(` <span class="badge shared">Shared</span>`)
 	}
-	if item.Archived {
-		badges.WriteString(` <span class="badge">Archived</span>`)
+	if item.ReadState == "read" {
+		badges.WriteString(` <span class="badge read">Read</span>`)
 	}
 	if linkBroken(item) {
 		badges.WriteString(` <span class="badge broken">Broken link</span>`)
@@ -977,11 +987,33 @@ func (s *Server) bulk(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		back = safeReturn(back)
 	}
+	if r.FormValue("action") == "delete" {
+		if err := s.bulkDelete(r.Context(), ids); err != nil {
+			s.internalError(w, err)
+			return
+		}
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
 	if err := s.store.BulkUpdate(r.Context(), ids, r.FormValue("action")); err != nil {
 		http.Redirect(w, r, back, http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, back, http.StatusSeeOther)
+}
+
+// bulkDelete removes the selected items and their snapshot files.
+func (s *Server) bulkDelete(ctx context.Context, ids []int64) error {
+	paths, err := s.store.SnapshotPaths(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		if s.cfg.SnapshotsDir != "" && filepath.Dir(p) == filepath.Clean(s.cfg.SnapshotsDir) {
+			_ = os.Remove(p)
+		}
+	}
+	return s.store.DeleteItems(ctx, ids)
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
 	token := template.HTMLEscapeString(csrf(r))
