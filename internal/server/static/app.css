@@ -282,6 +282,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 }
 .item-meta .author { color: var(--gl-text-muted); }
 .item-meta time { color: var(--gl-text-muted); font-variant-numeric: tabular-nums; }
+.snippet { margin: var(--gl-space-1) 0 0; color: var(--gl-text-muted); font-size: 0.92rem; line-height: 1.5; }
+.snippet mark { background: var(--gl-accent-tint); color: var(--gl-accent); padding: 0 0.1em; border-radius: 2px; }
 /* Bold-for-unread only in the reading queues (Feeds, Read Later). */
 .items.queue li.unread .item-main > a { font-weight: 600; }
 .items li input[type="checkbox"] { flex: none; transform: translateY(0.35rem); width: 0.95rem; height: 0.95rem; }

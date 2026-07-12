@@ -86,7 +86,7 @@ Migrations run automatically on startup. They are ordered, versioned, and embedd
 
 - items is the single source of truth for content. feed_id is nullable; a null feed_id means the item was saved manually.
 - Deduplicate by canonical_url and a content hash before insert.
-- The FTS5 table is kept in sync by triggers on items, covering title, extracted_text, and snapshot text. If you change those columns, update the triggers in the same migration.
+- The FTS5 table is kept in sync by triggers on items, covering title, extracted_text, and snapshot text. If you change those columns, update the triggers in the same migration. It is a contentless FTS5 table (`content=''`), so SQLite's `snippet()`/`highlight()` do not work; search excerpts are built in Go from the item's own content (`excerpt` in internal/server, which strips tags, escapes each word, and wraps matches in `<mark>`).
 - Tags are flat and shared across all item sources. There are no folders or categories.
 
 ## Security invariants

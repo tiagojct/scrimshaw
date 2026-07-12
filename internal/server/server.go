@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"log/slog"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -742,6 +744,68 @@ func searchFormBody(query string) string {
 	return dashboardToolbar + `<h1>Search</h1><div class="filters"><form action="/search"><label>Search <input name="q" type="search" value="` + template.HTMLEscapeString(query) + `" autofocus placeholder="Titles, article text, snapshots"></label><button class="primary">Search</button></form></div>`
 }
 
+var (
+	htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+	wordRe    = regexp.MustCompile(`[\p{L}\p{N}]+`)
+)
+
+func normalizeWord(w string) string {
+	return strings.ToLower(strings.Trim(w, ".,;:!?\"'’“”()[]{}—–…"))
+}
+
+// excerpt builds a safe, tag-free snippet of an item's content, windowed around
+// the first matching query term and with matching words wrapped in <mark>. Each
+// word is escaped individually, so only the <mark> tags are ever live HTML.
+func excerpt(content, query string, maxWords int) template.HTML {
+	text := html.UnescapeString(htmlTagRe.ReplaceAllString(content, " "))
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return ""
+	}
+	terms := map[string]bool{}
+	for _, t := range wordRe.FindAllString(strings.ToLower(query), -1) {
+		terms[t] = true
+	}
+	hit := -1
+	for i, wd := range words {
+		if terms[normalizeWord(wd)] {
+			hit = i
+			break
+		}
+	}
+	start, end := 0, len(words)
+	if hit >= 0 {
+		start = hit - maxWords/2
+		if start < 0 {
+			start = 0
+		}
+		end = start + maxWords
+		if end > len(words) {
+			end = len(words)
+		}
+	} else if len(words) > maxWords {
+		end = maxWords
+	}
+	var b strings.Builder
+	if start > 0 {
+		b.WriteString("… ")
+	}
+	for i := start; i < end; i++ {
+		if i > start {
+			b.WriteByte(' ')
+		}
+		if terms[normalizeWord(words[i])] {
+			b.WriteString("<mark>" + template.HTMLEscapeString(words[i]) + "</mark>")
+		} else {
+			b.WriteString(template.HTMLEscapeString(words[i]))
+		}
+	}
+	if end < len(words) {
+		b.WriteString(" …")
+	}
+	return template.HTML(b.String())
+}
+
 func (s *Server) search(w http.ResponseWriter, r *http.Request, _ string) {
 	query := r.URL.Query().Get("q")
 	items, err := s.store.Search(r.Context(), query)
@@ -757,7 +821,13 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request, _ string) {
 		if item.Author != "" {
 			meta = `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
 		}
-		fmt.Fprintf(&b, `<li><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`, item.ID, template.HTMLEscapeString(item.Title), meta)
+		meta += timeTag(item.AddedAt)
+		snippet := ""
+		if ex := excerpt(item.ExtractedText, query, 34); ex != "" {
+			snippet = `<p class="snippet">` + string(ex) + `</p>`
+		}
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div>%s</div></li>`,
+			item.ID, template.HTMLEscapeString(item.Title), meta, snippet)
 	}
 	b.WriteString("</ul>")
 	if len(items) == 0 && query != "" {
