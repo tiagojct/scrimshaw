@@ -24,6 +24,50 @@ func (r feedTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// redirectingFeedTransport serves a fixed 301 for one URL and RSS for another,
+// so a poll's permanent-redirect handling can be tested without a real
+// listener (fetch.New's SSRF guard rejects loopback on principle, so
+// httptest.Server isn't an option here).
+type redirectingFeedTransport struct {
+	from, to, rss string
+}
+
+func (t redirectingFeedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.String() == t.from {
+		return &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"Location": {t.to}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/rss+xml"}}, Body: io.NopCloser(strings.NewReader(t.rss)), Request: req}, nil
+}
+
+func TestPollDueUpdatesFeedURLAfterPermanentRedirect(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir()+"/items.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	feedID, err := db.AddFeed(ctx, "https://example.test/old-feed", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rss := `<?xml version="1.0"?><rss version="2.0"><channel><title>Example</title></channel></rss>`
+	// fetch.New wires up the real CheckRedirect (where permanent-redirect
+	// detection lives); only the Transport is swapped for a fake one.
+	client := fetch.New(time.Second)
+	client.HTTP.Transport = redirectingFeedTransport{from: "https://example.test/old-feed", to: "https://example.test/new-feed", rss: rss}
+	service := &Service{Store: db, Client: client, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), DisableAfter: 5}
+	if err := service.PollDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+	feed, err := db.Feed(ctx, feedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if feed.URL != "https://example.test/new-feed" {
+		t.Fatalf("feed URL after permanent redirect = %q, want the new URL", feed.URL)
+	}
+}
+
 func TestAutoSnapshotCreatesSnapshotForNewFeedItem(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(ctx, t.TempDir()+"/items.db")

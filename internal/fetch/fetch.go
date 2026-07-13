@@ -19,12 +19,32 @@ type Client struct{ HTTP *http.Client }
 func New(timeout time.Duration) *Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: safeDialContext(dialer)}
-	return &Client{HTTP: &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return errors.New("too many redirects")
+	return &Client{HTTP: &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: checkRedirect}}
+}
+
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many redirects")
+	}
+	// req.Response is the response that triggered this redirect (see net/http's
+	// Client.do), so this is the only place a permanent (301/308) hop is
+	// visible; withRedirectTracking's context value records it for
+	// GetTrackingRedirects to report back to the caller.
+	if info, ok := req.Context().Value(redirectKey{}).(*redirectInfo); ok && req.Response != nil {
+		if req.Response.StatusCode == http.StatusMovedPermanently || req.Response.StatusCode == http.StatusPermanentRedirect {
+			info.sawPermanent = true
 		}
-		return ValidateURL(req.URL.String())
-	}}}
+	}
+	return ValidateURL(req.URL.String())
+}
+
+type redirectKey struct{}
+
+type redirectInfo struct{ sawPermanent bool }
+
+func withRedirectTracking(ctx context.Context) (context.Context, *redirectInfo) {
+	info := &redirectInfo{}
+	return context.WithValue(ctx, redirectKey{}, info), info
 }
 
 func safeDialContext(d *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
@@ -93,11 +113,24 @@ func forbidden(ip net.IP) bool {
 }
 
 func (c *Client) Get(ctx context.Context, rawURL, etag, modified string) ([]byte, http.Header, error) {
-	return c.get(ctx, rawURL, etag, modified, false)
+	body, headers, _, err := c.get(ctx, rawURL, etag, modified, false)
+	return body, headers, err
 }
 
 func (c *Client) GetMedia(ctx context.Context, rawURL string) ([]byte, http.Header, error) {
-	return c.get(ctx, rawURL, "", "", true)
+	body, headers, _, err := c.get(ctx, rawURL, "", "", true)
+	return body, headers, err
+}
+
+// GetTrackingRedirects behaves like Get, but also reports the final URL
+// actually reached and whether a permanent (301/308) redirect occurred
+// anywhere along the way. Used by the feed poller to detect a feed that has
+// permanently moved, so it can update the stored URL instead of letting the
+// failure counter climb toward auto-disable.
+func (c *Client) GetTrackingRedirects(ctx context.Context, rawURL, etag, modified string) (body []byte, headers http.Header, finalURL string, permanent bool, err error) {
+	ctx, info := withRedirectTracking(ctx)
+	body, headers, finalURL, err = c.get(ctx, rawURL, etag, modified, false)
+	return body, headers, finalURL, info.sawPermanent, err
 }
 
 // Status performs an SSRF-guarded request and returns the final HTTP status
@@ -119,13 +152,13 @@ func (c *Client) Status(ctx context.Context, rawURL string) (int, error) {
 	return resp.StatusCode, nil
 }
 
-func (c *Client) get(ctx context.Context, rawURL, etag, modified string, allowMedia bool) ([]byte, http.Header, error) {
+func (c *Client) get(ctx context.Context, rawURL, etag, modified string, allowMedia bool) ([]byte, http.Header, string, error) {
 	if err := ValidateURL(rawURL); err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	req.Header.Set("User-Agent", "Scrimshaw/1.0 (+https://github.com/tiagojct/scrimshaw)")
 	if etag != "" {
@@ -136,24 +169,28 @@ func (c *Client) get(ctx context.Context, rawURL, etag, modified string, allowMe
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer resp.Body.Close()
+	finalURL := rawURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
 	if resp.StatusCode == http.StatusNotModified {
-		return nil, resp.Header, nil
+		return nil, resp.Header, finalURL, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("unexpected HTTP status %s", resp.Status)
+		return nil, nil, finalURL, fmt.Errorf("unexpected HTTP status %s", resp.Status)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, finalURL, err
 	}
 	if len(body) > maxResponseBytes {
-		return nil, nil, errors.New("response exceeds size limit")
+		return nil, nil, finalURL, errors.New("response exceeds size limit")
 	}
 	if !allowMedia && !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/") && !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "xml") && !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "html") && resp.Header.Get("Content-Type") != "" {
-		return nil, nil, errors.New("unsupported content type")
+		return nil, nil, finalURL, errors.New("unsupported content type")
 	}
-	return body, resp.Header, nil
+	return body, resp.Header, finalURL, nil
 }

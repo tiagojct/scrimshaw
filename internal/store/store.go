@@ -213,6 +213,13 @@ func (s *Store) EnableFeed(ctx context.Context, id int64) error {
 	return err
 }
 
+// UpdateFeedURL rewrites a feed's URL, e.g. after following a permanent (301)
+// redirect, so it stops depending on the old address staying alive.
+func (s *Store) UpdateFeedURL(ctx context.Context, id int64, url string) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET url=? WHERE id=?", url, id)
+	return err
+}
+
 func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]Feed, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled
 		FROM feeds WHERE disabled = 0 AND (last_fetched IS NULL OR datetime(last_fetched, '+' || refresh_interval_seconds || ' seconds') <= datetime(?))`, now.UTC().Format(time.RFC3339))

@@ -110,9 +110,19 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 }
 
 func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
-	body, headers, err := s.Client.Get(ctx, feed.URL, feed.ETag, feed.LastModified)
+	body, headers, finalURL, permanent, err := s.Client.GetTrackingRedirects(ctx, feed.URL, feed.ETag, feed.LastModified)
 	if err != nil {
 		return err
+	}
+	if permanent && finalURL != "" && finalURL != feed.URL {
+		// The feed moved for good; follow it instead of letting every future
+		// poll re-resolve the same redirect and eventually hit the failure
+		// counter if the old URL ever stops redirecting.
+		if err := s.Store.UpdateFeedURL(ctx, feed.ID, finalURL); err != nil {
+			s.Logger.Warn("update feed URL after permanent redirect", "feed_id", feed.ID, "old_url", feed.URL, "new_url", finalURL, "error", err)
+		} else {
+			s.Logger.Info("feed URL updated after permanent redirect", "feed_id", feed.ID, "old_url", feed.URL, "new_url", finalURL)
+		}
 	}
 	if body == nil {
 		// 304 Not Modified: keep the existing validators if the server omitted them.
