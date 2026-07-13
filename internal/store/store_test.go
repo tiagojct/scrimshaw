@@ -230,6 +230,92 @@ func TestTagsAndDelete(t *testing.T) {
 	}
 }
 
+func TestUnreadTagCountsScopedToCollection(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	feedID, err := s.AddFeed(ctx, "https://ex/feed", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertFeedItem(ctx, feedID, "https://ex/feed-item", "Feed item", "", "body", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	feedItemID, err := s.ItemIDByURL(ctx, "https://ex/feed-item")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetItemTags(ctx, feedItemID, []string{"news"}); err != nil {
+		t.Fatal(err)
+	}
+
+	bookmarkID, err := s.InsertManualItem(ctx, "https://ex/bookmark", "A bookmark", "", "", "", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetItemTags(ctx, bookmarkID, []string{"reading"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Feeds view's tag bar must show only tags on feed items, not the
+	// unrelated bookmark's tag.
+	counts, err := s.UnreadTagCounts(ctx, ListOptions{Source: "feed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 1 || counts[0].Name != "news" {
+		t.Fatalf("feed-scoped tag counts = %v, want just [news]", counts)
+	}
+
+	// The Bookmarks view must show only the bookmark's tag, not the feed item's.
+	counts, err = s.UnreadTagCounts(ctx, ListOptions{Bookmarked: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 1 || counts[0].Name != "reading" {
+		t.Fatalf("bookmark-scoped tag counts = %v, want just [reading]", counts)
+	}
+}
+
+func TestListPageSinceUntilFiltersByDate(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	feedID, err := s.AddFeed(ctx, "https://ex/feed", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
+	yesterday := today.Add(-24 * time.Hour)
+	if _, err := s.InsertFeedItem(ctx, feedID, "https://ex/today", "Today item", "", "body", today); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertFeedItem(ctx, feedID, "https://ex/yesterday", "Yesterday item", "", "body", yesterday); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	items, total, err := s.ListPage(ctx, ListOptions{
+		Since: start.Format(time.RFC3339), Until: start.Add(24 * time.Hour).Format(time.RFC3339),
+		IncludeArchived: true, PerPage: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || items[0].Title != "Today item" {
+		t.Fatalf("Since/Until filter = %d items %v, want just [Today item]", total, items)
+	}
+}
+
 func TestFeedSettingsAndReenable(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")

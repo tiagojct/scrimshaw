@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	readability "github.com/go-shiori/go-readability"
@@ -16,12 +19,50 @@ import (
 	"github.com/tiagojct/scrimshaw/internal/store"
 )
 
+var feedHTMLTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// fallbackTitle derives a list-friendly title for feed entries that publish
+// no <title> (common in linkblog-style feeds that are just body text), so an
+// item never renders as a blank, unclickable-looking link.
+func fallbackTitle(text, link string) string {
+	plain := html.UnescapeString(feedHTMLTagRe.ReplaceAllString(text, " "))
+	const maxWords = 12
+	words := strings.Fields(plain)
+	if len(words) > 0 {
+		if len(words) > maxWords {
+			return strings.Join(words[:maxWords], " ") + "…"
+		}
+		return strings.Join(words, " ")
+	}
+	if u, err := url.Parse(link); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return link
+}
+
 type Service struct {
 	Store        *store.Store
 	Client       *fetch.Client
 	Logger       *slog.Logger
 	DisableAfter int
 	Snapshots    *reader.Saver
+}
+
+// BackfillBlankTitles derives a title for stored items that have none
+// (linkblog-style feed entries ingested before fallbackTitle existed), from
+// their already-extracted body text. Safe to run on every startup: it only
+// touches rows with a blank title, and a fixed row no longer matches.
+func BackfillBlankTitles(ctx context.Context, st *store.Store) (int, error) {
+	items, err := st.BlankTitleItems(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		if err := st.SetItemTitle(ctx, item.ID, fallbackTitle(item.ExtractedText, item.URL)); err != nil {
+			return 0, err
+		}
+	}
+	return len(items), nil
 }
 
 func (s *Service) PollDue(ctx context.Context) error {
@@ -109,8 +150,12 @@ func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 		if entry.Author != nil {
 			author = entry.Author.Name
 		}
+		title := entry.Title
+		if strings.TrimSpace(title) == "" {
+			title = fallbackTitle(text, entry.Link)
+		}
 		// One malformed entry must not fail the whole poll and disable the feed.
-		inserted, err := s.Store.InsertFeedItem(ctx, feed.ID, entry.Link, entry.Title, author, text, publishedAt)
+		inserted, err := s.Store.InsertFeedItem(ctx, feed.ID, entry.Link, title, author, text, publishedAt)
 		if err != nil {
 			s.Logger.Warn("skipping feed item", "feed_id", feed.ID, "url", entry.Link, "error", err)
 			continue

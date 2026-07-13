@@ -49,6 +49,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	if fixed, err := feeds.BackfillBlankTitles(ctx, db); err != nil {
+		logger.Error("backfill blank item titles", "error", err)
+	} else if fixed > 0 {
+		logger.Info("backfilled blank item titles", "count", fixed)
+	}
 	timeout, err := time.ParseDuration(env("SCRIMSHAW_FETCH_TIMEOUT", "30s"))
 	if err != nil {
 		logger.Error("invalid fetch timeout", "error", err)

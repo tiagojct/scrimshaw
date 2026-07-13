@@ -284,15 +284,27 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		IncludeArchived: v.includeArchived, Sort: sort,
 		Page: page, PerPage: 50,
 	}
+	if v.key == "today" {
+		// Computed per-request (not stored on the static itemView) since "today"
+		// moves; bounds are on COALESCE(published_at, added_at), so manual saves
+		// and undated feed items count by when they were added.
+		start := time.Now()
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+		options.Since = start.UTC().Format(time.RFC3339)
+		options.Until = start.Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	}
 	items, total, err := s.store.ListPage(r.Context(), options)
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
-	tagCounts, err := s.store.UnreadTagCounts(r.Context())
-	if err != nil {
-		s.internalError(w, err)
-		return
+	var tagCounts []store.Count
+	if tag == "" {
+		tagCounts, err = s.store.UnreadTagCounts(r.Context(), options)
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
 	}
 
 	// Preserve the active view, sort, and tag across pagination.
@@ -330,7 +342,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	} else if len(tagCounts) > 0 {
 		b.WriteString(`<p class="tagbar">Unread tags: `)
 		for _, count := range tagCounts {
-			fmt.Fprintf(&b, `<a href="/?view=all&tag=%s">%s (%d)</a>`, url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
+			fmt.Fprintf(&b, `<a href="/?view=%s&tag=%s">%s (%d)</a>`, url.QueryEscape(v.key), url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
 		}
 		b.WriteString(`</p>`)
 	}
@@ -472,6 +484,7 @@ type itemView struct {
 }
 
 var viewOrder = []itemView{
+	{key: "today", label: "Today", includeArchived: true, showSource: true, empty: "Nothing published today yet."},
 	{key: "feeds", label: "Feeds", source: "feed", empty: "No feed items yet. Subscribe to a feed to start."},
 	{key: "later", label: "Read Later", readLater: "1", empty: "Nothing to read yet. Add a link, or send a feed item here with Read later.", showSource: true},
 	{key: "bookmarks", label: "Bookmarks", bookmarked: "1", includeArchived: true, empty: "No bookmarks yet. Add a link, or bookmark a feed item.", showSource: true},

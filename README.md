@@ -23,11 +23,12 @@ The interface is a set of views over that one table:
 | View | Shows |
 | --- | --- |
 | **Dashboard** | The home screen: counts (unread feeds, to-read, bookmarks, starred, highlights, broken links) and recent items per section |
+| **Today** | Everything published or added today, across every source (a NetNewsWire-style smart view) |
 | **Feeds** | Your subscription firehose |
 | **Read Later** | The reading queue |
 | **Bookmarks** | Your linklog (kept even after reading) |
 | **Starred** | Favourites, across everything |
-| **Archived** | Things you're done with (still searchable) |
+| **Read** | Things you're done with (still searchable, still counted in Bookmarks/Starred if they were one) |
 | **All** | Everything |
 | **Highlights** | Every passage and note, across all items |
 

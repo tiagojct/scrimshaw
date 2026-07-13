@@ -56,6 +56,7 @@ type ListOptions struct {
 	Tag, State, ItemType, Sort, Source string
 	ReadLater, Bookmarked, Shared      string // "1", "0", or "" for no filter
 	IncludeArchived                    bool   // keep archived items in the default view
+	Since, Until                       string // RFC3339 UTC bounds on COALESCE(published_at, added_at); "" = no bound
 	Page, PerPage                      int
 }
 
@@ -459,6 +460,14 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 		where = append(where, "i.item_type=?")
 		args = append(args, options.ItemType)
 	}
+	if options.Since != "" {
+		where = append(where, "COALESCE(i.published_at, i.added_at) >= ?")
+		args = append(args, options.Since)
+	}
+	if options.Until != "" {
+		where = append(where, "COALESCE(i.published_at, i.added_at) < ?")
+		args = append(args, options.Until)
+	}
 	condition := "1=1"
 	if len(where) > 0 {
 		condition = strings.Join(where, " AND ")
@@ -492,8 +501,36 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	return items, total, rows.Err()
 }
 
-func (s *Store) UnreadTagCounts(ctx context.Context) ([]Count, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT t.name, COUNT(*) FROM tags t JOIN item_tags it ON it.tag_id=t.id JOIN items i ON i.id=it.item_id WHERE i.archived=0 AND i.read_state='unread' GROUP BY t.id ORDER BY t.name`)
+// UnreadTagCounts counts unread items per tag within the same collection a
+// list view shows (matching options.Source/ReadLater/Bookmarked/starred
+// state), not across the whole database.
+func (s *Store) UnreadTagCounts(ctx context.Context, options ListOptions) ([]Count, error) {
+	where := []string{"i.archived=0", "i.read_state='unread'"}
+	args := []any{}
+	if options.Source == "feed" || options.Source == "manual" {
+		where = append(where, "i.source=?")
+		args = append(args, options.Source)
+	}
+	if options.ReadLater == "1" || options.ReadLater == "0" {
+		where = append(where, "i.read_later="+options.ReadLater)
+	}
+	if options.Bookmarked == "1" || options.Bookmarked == "0" {
+		where = append(where, "i.bookmarked="+options.Bookmarked)
+	}
+	if options.State == "starred" {
+		where = append(where, "i.starred=1")
+	}
+	if options.Since != "" {
+		where = append(where, "COALESCE(i.published_at, i.added_at) >= ?")
+		args = append(args, options.Since)
+	}
+	if options.Until != "" {
+		where = append(where, "COALESCE(i.published_at, i.added_at) < ?")
+		args = append(args, options.Until)
+	}
+	query := `SELECT t.name, COUNT(*) FROM tags t JOIN item_tags it ON it.tag_id=t.id JOIN items i ON i.id=it.item_id WHERE ` +
+		strings.Join(where, " AND ") + ` GROUP BY t.id ORDER BY t.name`
+	rows, err := s.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -511,6 +548,31 @@ func (s *Store) UnreadTagCounts(ctx context.Context) ([]Count, error) {
 
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
 	return scanItem(s.DB.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id=?`, id))
+}
+
+// BlankTitleItems returns items with no title, for the startup backfill that
+// derives one from stored content (see feeds.BackfillBlankTitles).
+func (s *Store) BlankTitleItems(ctx context.Context) ([]Item, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE TRIM(i.title)=''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Item
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// SetItemTitle updates an item's title in place.
+func (s *Store) SetItemTitle(ctx context.Context, id int64, title string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE items SET title=? WHERE id=?`, title, id)
+	return err
 }
 
 // ItemTags returns an item's tag names, sorted.
