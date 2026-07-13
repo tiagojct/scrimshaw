@@ -25,11 +25,17 @@ type Saver struct {
 }
 
 // Save fetches, extracts, and stores a page as a Read Later article with an
-// offline snapshot.
+// offline snapshot. Extraction can fail for reasons unrelated to the URL being
+// bad (a bot-blocked paywall like nytimes.com's DataDome challenge, a non-article
+// page, a page with no readable content) — rather than losing the save entirely,
+// it falls back to a plain link the same way SaveLink does, still filed as read
+// later. This is the same tolerance readLaterItem already applies when promoting
+// an existing bookmark and its extraction fails; a later manual retry (e.g. via
+// the reader's "Read later" toggle) can attempt extraction again.
 func (s *Saver) Save(ctx context.Context, rawURL string, tags []string) (int64, error) {
 	title, author, siteName, content, text, err := s.extract(ctx, rawURL)
 	if err != nil {
-		return 0, err
+		return s.Store.InsertManualItem(ctx, rawURL, s.titleOrHost(ctx, rawURL), "", "", "", tags, true)
 	}
 	id, err := s.Store.InsertManualItem(ctx, rawURL, title, author, siteName, content, tags, true)
 	if err != nil {
@@ -45,16 +51,21 @@ func (s *Saver) Save(ctx context.Context, rawURL string, tags []string) (int64, 
 // title from <title>/og:title, which works for any page (not just articles); a
 // page that will not load is still bookmarked (its link check flags it later).
 func (s *Saver) SaveLink(ctx context.Context, rawURL string, tags []string) (int64, error) {
-	title := ""
+	return s.Store.InsertManualItem(ctx, rawURL, s.titleOrHost(ctx, rawURL), "", "", "", tags, false)
+}
+
+// titleOrHost fetches a page to read its <title>/og:title, falling back to the
+// URL's host when the fetch fails or the page has no title.
+func (s *Saver) titleOrHost(ctx context.Context, rawURL string) string {
 	if body, _, err := s.Client.Get(ctx, rawURL, "", ""); err == nil {
-		title = pageTitle(body)
-	}
-	if title == "" {
-		if parsed, err := url.Parse(rawURL); err == nil {
-			title = parsed.Host
+		if title := pageTitle(body); title != "" {
+			return title
 		}
 	}
-	return s.Store.InsertManualItem(ctx, rawURL, title, "", "", "", tags, false)
+	if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+	return rawURL
 }
 
 // pageTitle extracts a human title from an HTML page, preferring og:title /
