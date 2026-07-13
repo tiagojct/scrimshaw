@@ -142,7 +142,7 @@ Back up the database with SQLite's **online backup** or `VACUUM INTO` rather tha
 
 ## Security
 
-- First run creates the admin account; there is no default password. Passwords are bcrypt-hashed with a 12-character minimum. Login is rate-limited with per-IP lockout.
+- First run creates the admin account; there is no default password. Passwords are bcrypt-hashed with a 12-character minimum, and can be changed later from Settings (this signs out every session, including the current one). Login is rate-limited with per-IP lockout.
 - Server-side sessions; cookies are `HttpOnly`, `SameSite=Lax`, and `Secure` (unless the base URL is `http://` for local dev). CSRF tokens on every state-changing form.
 - Every fetched third-party page is sanitized (bluemonday) before it is rendered or snapshotted. Remote images are proxied and cached same-origin.
 - Every user- or feed-supplied URL goes through an SSRF guard (blocks loopback, private, link-local, and CGNAT ranges, dials the validated IP, caps redirects and response size) with a timeout.

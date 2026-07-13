@@ -119,6 +119,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /save", s.withSession(s.saveURL))
 	mux.HandleFunc("GET /share", s.withSession(s.share))
 	mux.HandleFunc("GET /settings", s.withSession(s.settings))
+	mux.HandleFunc("POST /settings/password", s.withSession(s.changePassword))
 	mux.HandleFunc("GET /tokens", s.withSession(s.tokens))
 	mux.HandleFunc("POST /tokens", s.withSession(s.createToken))
 	mux.HandleFunc("POST /api/save", s.apiSave)
@@ -1065,10 +1066,19 @@ func (s *Server) bulkDelete(ctx context.Context, ids []int64) error {
 	return s.store.DeleteItems(ctx, ids)
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
+	s.settingsPage(w, r, "")
+}
+
+func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, passwordNotice string) {
 	token := template.HTMLEscapeString(csrf(r))
 	var b strings.Builder
 	b.WriteString(dashboardToolbar)
 	b.WriteString(`<h1>Settings</h1>`)
+	b.WriteString(`<section class="dash-section"><h2>Account</h2>`)
+	if passwordNotice != "" {
+		fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(passwordNotice))
+	}
+	fmt.Fprintf(&b, `<form class="stacked" method="post" action="/settings/password"><input type="hidden" name="csrf_token" value="%s"><label>Current password <input type="password" name="current_password" required autocomplete="current-password"></label><label>New password (at least 12 characters) <input type="password" name="new_password" required minlength="12" autocomplete="new-password"></label><button class="primary">Change password</button></form></section>`, token)
 	b.WriteString(`<section class="dash-section"><h2>Import</h2><p><a href="/import">Import data</a> from Pocket, Instapaper, linkding, Readeck, or a browser bookmarks file.</p></section>`)
 	b.WriteString(`<section class="dash-section"><h2>Export</h2><p>Download <a href="/export.json">everything as JSON</a> or <a href="/export.opml">feeds as OPML</a>.</p>`)
 	fmt.Fprintf(&b, `<form method="post" action="/export/markdown"><input type="hidden" name="csrf_token" value="%s"><button>Export Markdown to the configured folder</button></form></section>`, token)
@@ -1089,6 +1099,41 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
 	b.WriteString(`<section class="dash-section"><h2>API and integrations</h2><p><a href="/tokens">API tokens</a> for the browser extension, an Obsidian plugin, and publishing shared links to your website.</p></section>`)
 	fmt.Fprintf(&b, `<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="%s"><button>Log out</button></form>`, token)
 	s.render(w, "Settings", b.String(), "")
+}
+
+// changePassword requires the current password, re-hashes the new one, and
+// logs out every session (including this one) so a stolen session cookie
+// stops working the moment the password is rotated.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, _ string) {
+	newPassword := r.FormValue("new_password")
+	if len(newPassword) < 12 {
+		s.settingsPage(w, r, "New password must contain at least 12 characters.")
+		return
+	}
+	hash, err := s.store.UserPasswordHash(r.Context())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(r.FormValue("current_password"))) != nil {
+		s.settingsPage(w, r, "Current password is incorrect.")
+		return
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if err := s.store.SetUserPasswordHash(r.Context(), string(newHash)); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if err := s.store.DeleteAllSessions(r.Context()); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "scrimshaw_session", MaxAge: -1, Path: "/"})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func feedFormBody(csrfToken string) string {

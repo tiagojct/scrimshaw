@@ -316,6 +316,36 @@ func TestListPageSinceUntilFiltersByDate(t *testing.T) {
 	}
 }
 
+func TestSetUserPasswordHashAndDeleteAllSessions(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.CreateUser(ctx, "original-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(ctx, "sess1", "csrf1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetUserPasswordHash(ctx, "new-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if hash, err := s.UserPasswordHash(ctx); err != nil || hash != "new-hash" {
+		t.Fatalf("password hash after update = %q, err=%v", hash, err)
+	}
+
+	if err := s.DeleteAllSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionCSRF(ctx, "sess1"); err == nil {
+		t.Fatal("session should be gone after DeleteAllSessions")
+	}
+}
+
 func TestFeedSettingsAndReenable(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")

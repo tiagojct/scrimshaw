@@ -901,6 +901,18 @@ func (s *Store) CreateUser(ctx context.Context, passwordHash string) error {
 	return err
 }
 
+// SetUserPasswordHash updates the single admin account's password hash.
+func (s *Store) SetUserPasswordHash(ctx context.Context, passwordHash string) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE users SET password_hash=? WHERE id=(SELECT id FROM users ORDER BY id LIMIT 1)", passwordHash)
+	return err
+}
+
+// DeleteAllSessions logs out every session, e.g. after a password change.
+func (s *Store) DeleteAllSessions(ctx context.Context) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM sessions")
+	return err
+}
+
 func (s *Store) CreateSession(ctx context.Context, id, csrf string, expiry time.Time) error {
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO sessions(id, user_id, csrf_token, expires_at, created_at)
 		SELECT ?, id, ?, ?, ? FROM users ORDER BY id LIMIT 1`, id, csrf, expiry.UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339))
