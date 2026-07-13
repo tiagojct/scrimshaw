@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tiagojct/scrimshaw/internal/backup"
 	"github.com/tiagojct/scrimshaw/internal/feeds"
 	"github.com/tiagojct/scrimshaw/internal/fetch"
 	"github.com/tiagojct/scrimshaw/internal/links"
@@ -67,6 +68,8 @@ func main() {
 	go feedService.Run(ctx, time.Minute)
 	linkChecker := &links.Checker{Store: db, Client: fetch.New(timeout), Logger: logger, Batch: 20, MaxAge: 24 * time.Hour}
 	go linkChecker.Run(ctx, time.Hour)
+	backupSvc := &backup.Service{Store: db, Dir: filepath.Join(dataDir, "backups"), Keep: 7, Logger: logger}
+	go backupSvc.Run(ctx, 24*time.Hour)
 	app := server.New(db, logger, server.Config{SessionSecret: secret, CookieSecure: !strings.HasPrefix(env("SCRIMSHAW_BASE_URL", ""), "http://"), BaseURL: env("SCRIMSHAW_BASE_URL", ""), Saver: saver, Feeds: feedService, SnapshotsDir: filepath.Join(dataDir, "snapshots"), ImageCacheDir: filepath.Join(dataDir, "images"), Fetcher: fetch.New(timeout), ExportDir: filepath.Join(dataDir, "exports")})
 	httpServer := &http.Server{Addr: env("SCRIMSHAW_ADDR", ":8080"), Handler: app.Routes(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

@@ -138,7 +138,7 @@ Per-feed settings (refresh interval, fetch-full-content, auto-snapshot) are conf
 
 The SQLite database and the snapshots directory must sit on **persistent local disk** — a bind mount or a local named volume, never a network filesystem, or you risk corruption and locking failures. Scrimshaw is the only process that should write to the database; don't run the `sqlite3` CLI or another tool against it while the app is running.
 
-Back up the database with SQLite's **online backup** or `VACUUM INTO` rather than copying the file while it runs, and keep the snapshots directory in the same routine. To restore: stop Scrimshaw, restore the database and snapshots together into the data directory, then start it again. Migrations run automatically on startup and are versioned and append-only.
+Scrimshaw takes its own daily backup automatically: a `VACUUM INTO` snapshot into `data/backups/`, keeping the 7 most recent, with no cron job needed. That covers the database against corruption, but not the snapshots directory and not an off-box copy — for those, back up the whole data directory with SQLite's **online backup**/`VACUUM INTO` (never by copying the live file) on your own schedule. To restore: stop Scrimshaw, restore the database and snapshots together into the data directory, then start it again. Migrations run automatically on startup and are versioned and append-only.
 
 ## Security
 

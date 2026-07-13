@@ -70,8 +70,16 @@ a bind mount or a local named volume, never NFS/SMB. Scrimshaw is the only
 process that should write to the database; do not point the `sqlite3` CLI or
 another tool at it while it runs.
 
-Back up with SQLite's online backup rather than copying the live file. Simplest,
-with the app stopped so the copy is consistent:
+Scrimshaw backs itself up automatically: it runs SQLite's online `VACUUM INTO`
+once at startup and every 24 hours after, writing a timestamped copy to
+`data/backups/` and keeping the 7 most recent (older ones are deleted). No
+cron job or manual step is required for this. It does not cover the
+`snapshots/` directory, and it is not an off-box copy — treat it as protection
+against a corrupted or truncated live database, not against losing the whole
+volume/host.
+
+For an off-box copy (or to include snapshots), archive the whole data
+directory. Simplest, with the app stopped so the copy is consistent:
 
 ```sh
 docker compose stop
@@ -79,12 +87,12 @@ tar czf scrimshaw-backup-$(date +%F).tar.gz data/
 docker compose start
 ```
 
-Without stopping, take a consistent database snapshot with `VACUUM INTO` and
-archive the snapshots directory alongside it:
+Without stopping, reuse one of Scrimshaw's own `data/backups/*.db` snapshots
+instead of copying the live file, and archive the snapshots directory
+alongside it:
 
 ```sh
-sqlite3 data/scrimshaw.db "VACUUM INTO 'backup-$(date +%F).db'"
-tar czf snapshots-$(date +%F).tar.gz data/snapshots/
+tar czf snapshots-$(date +%F).tar.gz data/snapshots/ data/backups/
 ```
 
 To restore: stop Scrimshaw, put the database and `snapshots/` back together into

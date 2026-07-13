@@ -641,6 +641,15 @@ func (s *Store) MergeTag(ctx context.Context, from, into string) error {
 	return tx.Commit()
 }
 
+// BackupTo runs SQLite's online VACUUM INTO to write a consistent full copy
+// of the database to path. Unlike copying the live file, this is safe to run
+// while the app keeps writing (see CLAUDE.md: never back up by copying the
+// live file directly).
+func (s *Store) BackupTo(ctx context.Context, path string) error {
+	_, err := s.DB.ExecContext(ctx, "VACUUM INTO ?", path)
+	return err
+}
+
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
 	return scanItem(s.DB.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id=?`, id))
 }
