@@ -559,6 +559,88 @@ func (s *Store) UnreadTagCounts(ctx context.Context, options ListOptions) ([]Cou
 	return counts, rows.Err()
 }
 
+// AllTagCounts returns every tag with its total item count, regardless of
+// read state — for tag-management UI (rename/merge), as opposed to
+// UnreadTagCounts which scopes to a list view's unread items.
+func (s *Store) AllTagCounts(ctx context.Context) ([]Count, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.name, COUNT(*) FROM tags t JOIN item_tags it ON it.tag_id=t.id GROUP BY t.id ORDER BY t.name COLLATE NOCASE`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var counts []Count
+	for rows.Next() {
+		var count Count
+		if err := rows.Scan(&count.Name, &count.Count); err != nil {
+			return nil, err
+		}
+		counts = append(counts, count)
+	}
+	return counts, rows.Err()
+}
+
+// RenameTag renames a tag in place. It fails (0 rows affected, via UPDATE OR
+// IGNORE) if oldName doesn't exist or if newName is already taken by a
+// different tag — the caller should use MergeTag to combine two tags instead.
+func (s *Store) RenameTag(ctx context.Context, oldName, newName string) error {
+	oldName, newName = strings.TrimSpace(oldName), strings.TrimSpace(newName)
+	if oldName == "" || newName == "" {
+		return errors.New("tag name cannot be empty")
+	}
+	result, err := s.DB.ExecContext(ctx, "UPDATE OR IGNORE tags SET name=? WHERE name=? COLLATE NOCASE", newName, oldName)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("could not rename %q to %q: no such tag, or %q is already in use (try merge instead)", oldName, newName, newName)
+	}
+	return nil
+}
+
+// MergeTag folds tag `from` into tag `into`: every item tagged `from` becomes
+// tagged `into` (items already carrying both are left with just `into`, since
+// item_tags is keyed on (item_id, tag_id)), then `from` is deleted. Both tags
+// must already exist.
+func (s *Store) MergeTag(ctx context.Context, from, into string) error {
+	from, into = strings.TrimSpace(from), strings.TrimSpace(into)
+	if from == "" || into == "" {
+		return errors.New("tag name cannot be empty")
+	}
+	if strings.EqualFold(from, into) {
+		return errors.New("cannot merge a tag into itself")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	var fromID, intoID int64
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM tags WHERE name=? COLLATE NOCASE", from).Scan(&fromID); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("tag %q not found", from)
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM tags WHERE name=? COLLATE NOCASE", into).Scan(&intoID); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("tag %q not found", into)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO item_tags(item_id, tag_id) SELECT item_id, ? FROM item_tags WHERE tag_id=?", intoID, fromID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM item_tags WHERE tag_id=?", fromID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tags WHERE id=?", fromID); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
 	return scanItem(s.DB.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id=?`, id))
 }

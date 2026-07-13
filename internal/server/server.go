@@ -120,6 +120,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /share", s.withSession(s.share))
 	mux.HandleFunc("GET /settings", s.withSession(s.settings))
 	mux.HandleFunc("POST /settings/password", s.withSession(s.changePassword))
+	mux.HandleFunc("POST /settings/tags/rename", s.withSession(s.renameTag))
+	mux.HandleFunc("POST /settings/tags/merge", s.withSession(s.mergeTag))
 	mux.HandleFunc("GET /tokens", s.withSession(s.tokens))
 	mux.HandleFunc("POST /tokens", s.withSession(s.createToken))
 	mux.HandleFunc("POST /api/save", s.apiSave)
@@ -1066,19 +1068,39 @@ func (s *Server) bulkDelete(ctx context.Context, ids []int64) error {
 	return s.store.DeleteItems(ctx, ids)
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request, _ string) {
-	s.settingsPage(w, r, "")
+	s.settingsPage(w, r, settingsNotices{})
 }
 
-func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, passwordNotice string) {
+// settingsNotices carries an inline status message for one section of the
+// Settings page, so a failed sub-form (change password, rename/merge a tag)
+// can be re-rendered in place instead of redirecting through a query param.
+type settingsNotices struct {
+	password, tags string
+}
+
+func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, notices settingsNotices) {
 	token := template.HTMLEscapeString(csrf(r))
 	var b strings.Builder
 	b.WriteString(dashboardToolbar)
 	b.WriteString(`<h1>Settings</h1>`)
 	b.WriteString(`<section class="dash-section"><h2>Account</h2>`)
-	if passwordNotice != "" {
-		fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(passwordNotice))
+	if notices.password != "" {
+		fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(notices.password))
 	}
 	fmt.Fprintf(&b, `<form class="stacked" method="post" action="/settings/password"><input type="hidden" name="csrf_token" value="%s"><label>Current password <input type="password" name="current_password" required autocomplete="current-password"></label><label>New password (at least 12 characters) <input type="password" name="new_password" required minlength="12" autocomplete="new-password"></label><button class="primary">Change password</button></form></section>`, token)
+	b.WriteString(`<section class="dash-section"><h2>Tags</h2>`)
+	if notices.tags != "" {
+		fmt.Fprintf(&b, `<p class="note">%s</p>`, template.HTMLEscapeString(notices.tags))
+	}
+	if counts, err := s.store.AllTagCounts(r.Context()); err == nil && len(counts) > 0 {
+		b.WriteString(`<p class="tagbar">`)
+		for _, c := range counts {
+			fmt.Fprintf(&b, `%s (%d) `, template.HTMLEscapeString(c.Name), c.Count)
+		}
+		b.WriteString(`</p>`)
+	}
+	fmt.Fprintf(&b, `<form class="stacked" method="post" action="/settings/tags/rename"><input type="hidden" name="csrf_token" value="%s"><label>Rename tag <input name="from" required placeholder="old name"></label><label>To <input name="to" required placeholder="new name"></label><button>Rename</button></form>`, token)
+	fmt.Fprintf(&b, `<form class="stacked" method="post" action="/settings/tags/merge"><input type="hidden" name="csrf_token" value="%s"><label>Merge tag <input name="from" required placeholder="tag to remove"></label><label>Into <input name="into" required placeholder="tag to keep"></label><button>Merge</button></form></section>`, token)
 	b.WriteString(`<section class="dash-section"><h2>Import</h2><p><a href="/import">Import data</a> from Pocket, Instapaper, linkding, Readeck, or a browser bookmarks file.</p></section>`)
 	b.WriteString(`<section class="dash-section"><h2>Export</h2><p>Download <a href="/export.json">everything as JSON</a> or <a href="/export.opml">feeds as OPML</a>.</p>`)
 	fmt.Fprintf(&b, `<form method="post" action="/export/markdown"><input type="hidden" name="csrf_token" value="%s"><button>Export Markdown to the configured folder</button></form></section>`, token)
@@ -1107,7 +1129,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, passwordNo
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, _ string) {
 	newPassword := r.FormValue("new_password")
 	if len(newPassword) < 12 {
-		s.settingsPage(w, r, "New password must contain at least 12 characters.")
+		s.settingsPage(w, r, settingsNotices{password: "New password must contain at least 12 characters."})
 		return
 	}
 	hash, err := s.store.UserPasswordHash(r.Context())
@@ -1116,7 +1138,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, _ string
 		return
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(r.FormValue("current_password"))) != nil {
-		s.settingsPage(w, r, "Current password is incorrect.")
+		s.settingsPage(w, r, settingsNotices{password: "Current password is incorrect."})
 		return
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -1134,6 +1156,24 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, _ string
 	}
 	http.SetCookie(w, &http.Cookie{Name: "scrimshaw_session", MaxAge: -1, Path: "/"})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (s *Server) renameTag(w http.ResponseWriter, r *http.Request, _ string) {
+	from, to := r.FormValue("from"), r.FormValue("to")
+	if err := s.store.RenameTag(r.Context(), from, to); err != nil {
+		s.settingsPage(w, r, settingsNotices{tags: err.Error()})
+		return
+	}
+	s.settingsPage(w, r, settingsNotices{tags: fmt.Sprintf("Renamed %q to %q.", from, to)})
+}
+
+func (s *Server) mergeTag(w http.ResponseWriter, r *http.Request, _ string) {
+	from, into := r.FormValue("from"), r.FormValue("into")
+	if err := s.store.MergeTag(r.Context(), from, into); err != nil {
+		s.settingsPage(w, r, settingsNotices{tags: err.Error()})
+		return
+	}
+	s.settingsPage(w, r, settingsNotices{tags: fmt.Sprintf("Merged %q into %q.", from, into)})
 }
 
 func feedFormBody(csrfToken string) string {

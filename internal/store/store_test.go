@@ -211,6 +211,103 @@ func TestInsertManualItemReturnsErrItemExistsOnDuplicateURL(t *testing.T) {
 	}
 }
 
+func TestRenameTag(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	id, err := s.InsertManualItem(ctx, "https://ex/a", "An item", "", "", "", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetItemTags(ctx, id, []string{"News", "tech"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RenameTag(ctx, "News", "Current Events"); err != nil {
+		t.Fatal(err)
+	}
+	tags, err := s.ItemTags(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slicesContain(tags, "Current Events") || slicesContain(tags, "News") {
+		t.Fatalf("tags after rename = %v", tags)
+	}
+
+	if err := s.RenameTag(ctx, "Current Events", "tech"); err == nil {
+		t.Fatal("renaming to an already-used name should fail (use merge instead)")
+	}
+	if err := s.RenameTag(ctx, "no-such-tag", "whatever"); err == nil {
+		t.Fatal("renaming a nonexistent tag should fail")
+	}
+}
+
+func TestMergeTag(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	id1, err := s.InsertManualItem(ctx, "https://ex/a", "Item A", "", "", "", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := s.InsertManualItem(ctx, "https://ex/b", "Item B", "", "", "", nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// id1 carries both tags already, exercising the PK-collision path the
+	// INSERT OR IGNORE has to tolerate; id2 carries only the merge source.
+	if err := s.SetItemTags(ctx, id1, []string{"golang", "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetItemTags(ctx, id2, []string{"golang"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MergeTag(ctx, "golang", "go"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{id1, id2} {
+		tags, err := s.ItemTags(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tags) != 1 || tags[0] != "go" {
+			t.Fatalf("item %d tags after merge = %v, want just [go]", id, tags)
+		}
+	}
+	counts, err := s.AllTagCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 1 || counts[0].Name != "go" || counts[0].Count != 2 {
+		t.Fatalf("tag counts after merge = %v, want just go:2", counts)
+	}
+
+	if err := s.MergeTag(ctx, "go", "go"); err == nil {
+		t.Fatal("merging a tag into itself should fail")
+	}
+	if err := s.MergeTag(ctx, "no-such-tag", "go"); err == nil {
+		t.Fatal("merging a nonexistent source tag should fail")
+	}
+}
+
+func slicesContain(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 func TestTagsAndDelete(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
