@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +92,15 @@ func TestSaveExtractsAndSnapshotsSanitizedContent(t *testing.T) {
 	}
 	if strings.Contains(item.ExtractedText, "<script") {
 		t.Fatal("unsafe script was retained")
+	}
+	saved, err := os.ReadFile(item.SnapshotPath.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(saved), "<style>"+snapshotStyle+"</style>") {
+		t.Fatal("snapshot should carry the inline reading stylesheet")
+	}
+	if !strings.Contains(string(saved), "Content-Security-Policy") {
+		t.Fatal("snapshot should still carry its CSP")
 	}
 }

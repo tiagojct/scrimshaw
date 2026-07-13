@@ -147,13 +147,18 @@ func (s *Saver) extract(ctx context.Context, rawURL string) (title, author, site
 	return article.Title, article.Byline, article.SiteName, content, article.TextContent, nil
 }
 
+// snapshotStyle is inlined (the CSP below allows no external stylesheet) so a
+// snapshot opened directly in a browser, months or years later, still reads as
+// a considered document rather than unstyled markup.
+const snapshotStyle = `body{max-width:38rem;margin:2.5rem auto;padding:0 1.25rem;font-family:Georgia,'Times New Roman',serif;font-size:1.125rem;line-height:1.65;color:#16222a;background:#f7fafb}img{max-width:100%;height:auto}a{color:#0b4f9e}pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}blockquote{margin:0 0 0 1rem;padding-left:1rem;border-left:3px solid #cdd7dc;color:#3d4a52}`
+
 // SaveSnapshot stores already-sanitized article HTML as an offline document.
 func (s *Saver) SaveSnapshot(ctx context.Context, id int64, content, text string) error {
 	if err := os.MkdirAll(s.Snapshots, 0700); err != nil {
 		return err
 	}
 	path := filepath.Join(s.Snapshots, fmt.Sprintf("%d.html", id))
-	snapshot := []byte("<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\"></head><body>" + content + "</body></html>")
+	snapshot := []byte("<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\"><style>" + snapshotStyle + "</style></head><body>" + content + "</body></html>")
 	if err := os.WriteFile(path, snapshot, 0600); err != nil {
 		return err
 	}
