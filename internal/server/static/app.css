@@ -338,8 +338,15 @@ article .meta a { color: var(--gl-accent); }
   line-height: 1.5;
 }
 
-/* Highlights */
-mark.hl { background: var(--gl-mark-bg); color: inherit; padding: 0 0.1em; border-radius: 2px; }
+/* Highlights: underline, not fill, to keep the reading surface quiet. */
+mark.hl {
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--gl-warn-line);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
 .hl-pop { position: absolute; z-index: 20; transform: translate(-50%, -100%); margin-top: -0.5rem; padding: 0; display: none; }
 .hl-pop.show { display: block; }
 .hl-pop button {
