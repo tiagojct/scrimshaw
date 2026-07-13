@@ -54,6 +54,9 @@ func main() {
 	} else if fixed > 0 {
 		logger.Info("backfilled blank item titles", "count", fixed)
 	}
+	if err := db.OptimizeFTS(ctx); err != nil {
+		logger.Warn("optimize FTS index", "error", err)
+	}
 	timeout, err := time.ParseDuration(env("SCRIMSHAW_FETCH_TIMEOUT", "30s"))
 	if err != nil {
 		logger.Error("invalid fetch timeout", "error", err)

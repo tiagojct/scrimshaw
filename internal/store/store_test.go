@@ -186,6 +186,31 @@ func TestBookmarkDedupAndBulkRead(t *testing.T) {
 	}
 }
 
+func TestInsertManualItemReturnsErrItemExistsOnDuplicateURL(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	feedID, err := s.AddFeed(ctx, "https://ex/feed", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertFeedItem(ctx, feedID, "https://ex/dup", "Feed item", "", "body", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A caller (e.g. saving a feed item's URL again as a bookmark) must be able
+	// to distinguish "already exists" from other failures via errors.Is, so the
+	// existing item can be looked up and merged into instead of erroring.
+	_, err = s.InsertManualItem(ctx, "https://ex/dup", "Bookmark title", "", "", "", nil, false)
+	if !errors.Is(err, ErrItemExists) {
+		t.Fatalf("InsertManualItem on a duplicate canonical_url = %v, want ErrItemExists", err)
+	}
+}
+
 func TestTagsAndDelete(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
@@ -313,6 +338,25 @@ func TestListPageSinceUntilFiltersByDate(t *testing.T) {
 	}
 	if total != 1 || len(items) != 1 || items[0].Title != "Today item" {
 		t.Fatalf("Since/Until filter = %d items %v, want just [Today item]", total, items)
+	}
+}
+
+func TestOptimizeFTS(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.InsertManualItem(ctx, "https://ex/optimize", "Optimize me", "", "", "<p>some searchable body text</p>", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.OptimizeFTS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.Search(ctx, "searchable")
+	if err != nil || len(items) != 1 {
+		t.Fatalf("search after optimize = %v items, err=%v", items, err)
 	}
 }
 

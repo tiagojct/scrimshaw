@@ -1854,12 +1854,16 @@ func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	rawURL := r.FormValue("url")
 	tags := strings.Split(r.FormValue("tags"), ",")
+	readLater := r.FormValue("read_later") == "1"
 	var id int64
 	var err error
-	if r.FormValue("read_later") == "1" {
+	if readLater {
 		id, err = s.cfg.Saver.Save(r.Context(), rawURL, tags)
 	} else {
 		id, err = s.cfg.Saver.SaveLink(r.Context(), rawURL, tags)
+	}
+	if errors.Is(err, store.ErrItemExists) {
+		id, err = s.mergeIntoExisting(r.Context(), rawURL, readLater)
 	}
 	if err != nil {
 		s.log.Warn("page save failed", "error", err)
@@ -1867,6 +1871,34 @@ func (s *Server) saveURL(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+// mergeIntoExisting handles saving a URL that's already in the datastore (as a
+// feed item or an earlier manual save): rather than erroring, it flips the
+// requested flag on the existing item and, when promoting to read later,
+// best-effort extracts full content if the item doesn't have any yet — the
+// same tolerance readLaterItem already applies, so a bot-blocked or slow
+// extraction doesn't turn a duplicate-URL save into a hard failure either.
+func (s *Server) mergeIntoExisting(ctx context.Context, rawURL string, readLater bool) (int64, error) {
+	id, err := s.store.ItemIDByURL(ctx, rawURL)
+	if err != nil {
+		return 0, err
+	}
+	if readLater {
+		if err := s.store.SetReadLater(ctx, id, true); err != nil {
+			return 0, err
+		}
+		if item, err := s.store.Item(ctx, id); err == nil && item.ExtractedText == "" && s.cfg.Saver != nil {
+			if err := s.cfg.Saver.Extract(ctx, id, item.URL); err != nil {
+				s.log.Warn("merge into existing: extract failed", "item", id, "error", err)
+			}
+		}
+		return id, nil
+	}
+	if err := s.store.SetBookmarked(ctx, id, true); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Server) manifest(w http.ResponseWriter, _ *http.Request) {

@@ -20,6 +20,12 @@ import (
 
 type Store struct{ DB *sql.DB }
 
+// ErrItemExists is returned by InsertManualItem when the URL's canonical form
+// already matches a stored item (feed or manual) — callers can look the
+// existing item up by URL and adjust its flags instead of treating this as a
+// hard failure.
+var ErrItemExists = errors.New("item already exists")
+
 type Item struct {
 	ID                                                                           int64
 	URL, CanonicalURL, Title, Author, SiteName, ExtractedText, ReadState, Source string
@@ -792,6 +798,14 @@ func (s *Store) BulkUpdate(ctx context.Context, ids []int64, action string) erro
 	return err
 }
 
+// OptimizeFTS merges the FTS5 index's internal segments. Safe and fast to run
+// unconditionally on every startup, so years of insert/update/delete churn
+// don't slowly fragment search performance.
+func (s *Store) OptimizeFTS(ctx context.Context) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO items_fts(items_fts) VALUES('optimize')`)
+	return err
+}
+
 func (s *Store) Search(ctx context.Context, query string) ([]Item, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -848,7 +862,7 @@ func (s *Store) InsertManualItem(ctx context.Context, rawURL, title, author, sit
 	}
 	if affected == 0 {
 		tx.Rollback()
-		return 0, errors.New("item already exists")
+		return 0, ErrItemExists
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
