@@ -65,6 +65,29 @@ func BackfillBlankTitles(ctx context.Context, st *store.Store) (int, error) {
 	return len(items), nil
 }
 
+// BackfillTitleEntities normalizes titles stored while still HTML-encoded
+// (ingested before the unescape above, or from a double-encoding feed), so
+// "A &amp; B" becomes "A & B". Unescaping is idempotent once normalized, so a
+// fixed row no longer changes: safe to run on every startup.
+func BackfillTitleEntities(ctx context.Context, st *store.Store) (int, error) {
+	items, err := st.AllItems(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, item := range items {
+		clean := html.UnescapeString(item.Title)
+		if clean == item.Title {
+			continue
+		}
+		if err := st.SetItemTitle(ctx, item.ID, clean); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
 func (s *Service) PollDue(ctx context.Context) error {
 	feeds, err := s.Store.DueFeeds(ctx, time.Now())
 	if err != nil {
@@ -159,9 +182,12 @@ func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 		}
 		author := ""
 		if entry.Author != nil {
-			author = entry.Author.Name
+			author = html.UnescapeString(entry.Author.Name)
 		}
-		title := entry.Title
+		// Some feeds double-encode entities in the title, so gofeed hands back
+		// e.g. "A &amp; B"; unescaping once here keeps the stored title plain
+		// text so a single render-time escape shows "A & B", not "A &amp; B".
+		title := html.UnescapeString(entry.Title)
 		if strings.TrimSpace(title) == "" {
 			title = fallbackTitle(text, entry.Link)
 		}

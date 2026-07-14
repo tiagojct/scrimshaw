@@ -351,6 +351,10 @@ ul { list-style: none; margin: 0; padding: 0; }
   color: var(--gl-text-muted);
 }
 .item-meta .author { color: var(--gl-text-muted); }
+/* Feed name in the meta line links to that feed's items. Kept quiet (muted,
+   no underline until hover) so it doesn't compete with the item title. */
+.item-meta .feed-name { color: var(--gl-text-muted); text-decoration: none; font-weight: 500; }
+.item-meta .feed-name:hover { color: var(--gl-accent); }
 .item-meta time { color: var(--gl-text-muted); font-variant-numeric: tabular-nums; }
 .snippet { margin: var(--gl-space-1) 0 0; color: var(--gl-text-muted); font-size: 0.92rem; line-height: 1.5; }
 .snippet mark { background: var(--gl-accent-tint); color: var(--gl-accent); padding: 0 0.1em; border-radius: 2px; }

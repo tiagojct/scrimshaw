@@ -64,6 +64,7 @@ type Feed struct {
 type ListOptions struct {
 	Tag, State, ItemType, Sort, Source string
 	ReadLater, Bookmarked, Shared      string // "1", "0", or "" for no filter
+	FeedID                             int64  // restrict to one feed's items; 0 = no filter
 	IncludeArchived                    bool   // keep archived items in the default view
 	Since, Until                       string // RFC3339 UTC bounds on COALESCE(published_at, added_at); "" = no bound
 	Page, PerPage                      int
@@ -484,6 +485,10 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	}
 	if options.Shared == "1" {
 		where = append(where, "i.shared=1")
+	}
+	if options.FeedID != 0 {
+		where = append(where, "i.feed_id=?")
+		args = append(args, options.FeedID)
 	}
 	if options.Tag != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM item_tags it JOIN tags t ON t.id=it.tag_id WHERE it.item_id=i.id AND t.name=? COLLATE NOCASE)`)

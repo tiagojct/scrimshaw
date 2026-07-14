@@ -288,12 +288,14 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	view := r.URL.Query().Get("view")
 	sort := r.URL.Query().Get("sort")
 	tag := r.URL.Query().Get("tag")
+	feedID, _ := strconv.ParseInt(r.URL.Query().Get("feed"), 10, 64)
 	v, ok := viewsByKey[view]
 	if !ok {
 		v = viewsByKey["feeds"]
 	}
 	options := store.ListOptions{
 		Tag: tag, State: v.state, Source: v.source, ReadLater: v.readLater, Bookmarked: v.bookmarked,
+		FeedID:          feedID,
 		IncludeArchived: v.includeArchived, Sort: sort,
 		Page: page, PerPage: 50,
 	}
@@ -320,7 +322,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 	}
 
-	// Preserve the active view, sort, and tag across pagination.
+	// Preserve the active view, sort, tag, and feed filter across pagination.
 	link := func(extra url.Values) string {
 		q := url.Values{"view": {v.key}}
 		if sort != "" {
@@ -328,6 +330,9 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		if tag != "" {
 			q.Set("tag", tag)
+		}
+		if feedID != 0 {
+			q.Set("feed", strconv.FormatInt(feedID, 10))
 		}
 		for key, values := range extra {
 			q[key] = values
@@ -343,8 +348,12 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	b.WriteString(`</nav>`)
 	fmt.Fprintf(&b, `<h1 class="view-title">%s</h1>`, v.label)
-	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><input type="hidden" name="tag" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form>`,
-		template.HTMLEscapeString(v.key), template.HTMLEscapeString(tag),
+	feedHidden := ""
+	if feedID != 0 {
+		feedHidden = fmt.Sprintf(`<input type="hidden" name="feed" value="%d">`, feedID)
+	}
+	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><input type="hidden" name="tag" value="%s">%s<label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form>`,
+		template.HTMLEscapeString(v.key), template.HTMLEscapeString(tag), feedHidden,
 		optionTag("", "Newest", sort), optionTag("oldest", "Oldest", sort), optionTag("unread", "Unread first", sort))
 	if v.key == "later" {
 		// A display-only preference (remembered client-side, not posted
@@ -358,6 +367,17 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	// not another filter control.
 	fmt.Fprintf(&b, `<div class="pin-view-bar"><form class="inline-action pin-view" method="post" action="/saved-views"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="path" value="%s"><input name="label" placeholder="Name this view" required><button>Pin this view</button></form></div>`,
 		template.HTMLEscapeString(csrf(r)), template.HTMLEscapeString(r.URL.RequestURI()))
+	if feedID != 0 {
+		clear := "/?view=" + url.QueryEscape(v.key)
+		if sort != "" {
+			clear += "&sort=" + url.QueryEscape(sort)
+		}
+		feedName := "this feed"
+		if f, ferr := s.store.Feed(r.Context(), feedID); ferr == nil {
+			feedName = f.Title
+		}
+		fmt.Fprintf(&b, `<p class="tagbar">Feed: %s &middot; <a href="%s">clear</a></p>`, template.HTMLEscapeString(feedName), clear)
+	}
 	if tag != "" {
 		clear := "/?view=" + url.QueryEscape(v.key)
 		if sort != "" {
@@ -1543,9 +1563,9 @@ func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
 			}
 			options += fmt.Sprintf(`<option value="%d"%s>%s</option>`, o.Seconds, sel, o.Label)
 		}
-		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button>Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><a class="button" href="/?view=feeds&feed=%d">Items</a><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button>Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
 			template.HTMLEscapeString(f.URL), feedIcon(title, f.FaviconURL), template.HTMLEscapeString(title), meta,
-			f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), template.HTMLEscapeString(f.Rules), f.ID, token)
+			f.ID, f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), template.HTMLEscapeString(f.Rules), f.ID, token)
 	}
 	b.WriteString(`</ul>`)
 	s.render(w, "Feeds", b.String(), "")
@@ -2444,6 +2464,12 @@ func itemKindBadges(item store.Item) string {
 // build it, so the same item looks the same regardless of where it's shown.
 func itemMeta(item store.Item, showSource, showReadBadge bool) string {
 	meta := ""
+	// Feed name first, linking to that feed's items — the answer to "show me
+	// everything from Kottke". Shown for any feed item in any view (the Feeds
+	// list mixes feeds, and mixed views like Today/All benefit too).
+	if item.Source == "feed" && item.FeedID.Valid && strings.TrimSpace(item.FeedTitle.String) != "" {
+		meta += fmt.Sprintf(`<a class="feed-name" href="/?view=feeds&feed=%d">%s</a>`, item.FeedID.Int64, template.HTMLEscapeString(item.FeedTitle.String))
+	}
 	if item.Author != "" {
 		meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
 	}

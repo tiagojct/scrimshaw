@@ -57,6 +57,11 @@ func main() {
 	} else if fixed > 0 {
 		logger.Info("backfilled blank item titles", "count", fixed)
 	}
+	if fixed, err := feeds.BackfillTitleEntities(ctx, db); err != nil {
+		logger.Error("normalize encoded item titles", "error", err)
+	} else if fixed > 0 {
+		logger.Info("normalized encoded item titles", "count", fixed)
+	}
 	if err := db.OptimizeFTS(ctx); err != nil {
 		logger.Warn("optimize FTS index", "error", err)
 	}
