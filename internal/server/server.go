@@ -338,9 +338,15 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 	b.WriteString(`</nav>`)
 	fmt.Fprintf(&b, `<h1 class="view-title">%s</h1>`, v.label)
-	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><input type="hidden" name="tag" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form></div>`,
+	fmt.Fprintf(&b, `<div class="filters"><form action="/search"><label>Search <input name="q" type="search" placeholder="Search everything"></label><button>Search</button></form><form action="/"><input type="hidden" name="view" value="%s"><input type="hidden" name="tag" value="%s"><label>Sort <select name="sort">%s%s%s</select></label><button>Apply</button></form>`,
 		template.HTMLEscapeString(v.key), template.HTMLEscapeString(tag),
 		optionTag("", "Newest", sort), optionTag("oldest", "Oldest", sort), optionTag("unread", "Unread first", sort))
+	if v.key == "later" {
+		// A display-only preference (remembered client-side, not posted
+		// anywhere), same pattern as the reader's reading-profile picker.
+		b.WriteString(`<label class="density-picker">Density <select id="density-mode"><option value="">Standard</option><option value="density-compact">Compact</option></select></label>`)
+	}
+	b.WriteString(`</div>`)
 	if tag != "" {
 		clear := "/?view=" + url.QueryEscape(v.key)
 		if sort != "" {
@@ -363,7 +369,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	if v.key == "feeds" || v.key == "later" {
 		listClass = "items queue"
 	}
-	fmt.Fprintf(&b, `<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="%s"><ul class="%s">`, template.HTMLEscapeString(csrf(r)), listClass)
+	fmt.Fprintf(&b, `<form method="post" action="/items/bulk"><input type="hidden" name="csrf_token" value="%s"><ul class="%s" data-view="%s">`, template.HTMLEscapeString(csrf(r)), listClass, template.HTMLEscapeString(v.key))
 	for _, item := range items {
 		classes := template.HTMLEscapeString(item.ReadState)
 		if item.Starred {

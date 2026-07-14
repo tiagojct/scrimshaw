@@ -334,6 +334,15 @@ ul { list-style: none; margin: 0; padding: 0; }
 .snippet mark { background: var(--gl-accent-tint); color: var(--gl-accent); padding: 0 0.1em; border-radius: 2px; }
 /* Bold-for-unread only in the reading queues (Feeds, Read Later). */
 .items.queue li.unread .item-main > a { font-weight: 600; }
+
+/* Density: compact mode, Read Later only (see plan — item rows are already
+   fairly compact two-line rows everywhere else, so the win is narrow, but
+   real specifically where you're scanning many titles fast to burn down a
+   backlog). Client-only preference, same pattern as reading profiles. */
+.density-picker { display: inline-flex; align-items: center; gap: var(--gl-space-1); margin: 0; }
+body.density-compact ul.items[data-view="later"] li { padding-top: var(--gl-space-1); padding-bottom: var(--gl-space-1); }
+body.density-compact ul.items[data-view="later"] .item-main { flex-direction: row; align-items: baseline; gap: var(--gl-space-3); }
+body.density-compact ul.items[data-view="later"] .item-meta { font-size: 0.78rem; }
 .items li input[type="checkbox"] { flex: none; transform: translateY(0.35rem); width: 0.95rem; height: 0.95rem; }
 
 .tagbar { color: var(--gl-text-muted); font-size: 0.9rem; margin-bottom: var(--gl-space-4); }

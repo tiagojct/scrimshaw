@@ -5,27 +5,32 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/service-worker.js").catch(() => {});
 }
 
-// Reading profile (compact/standard/relaxed): a client-only preference, not
-// synced to the server, applied as early as possible (app.js is a deferred
-// script, so this is the earliest point CSP's no-inline-script policy allows)
-// to keep the flash of the default profile brief.
-(function readingProfile() {
-  const KEY = "scrimshaw-reading-profile";
-  const CLASSES = ["reading-compact", "reading-relaxed"];
-  const saved = localStorage.getItem(KEY) || "";
-  document.body.classList.remove(...CLASSES);
+// bodyClassPreference wires a <select> (id pickerId) to a body class, backed
+// by localStorage — the shared shape behind reading profiles and density
+// mode below. Applied as early as possible (app.js is a deferred script, so
+// this is the earliest point CSP's no-inline-script policy allows) to keep
+// the flash of the default look brief.
+function bodyClassPreference(key, pickerId, classes) {
+  const saved = localStorage.getItem(key) || "";
+  document.body.classList.remove(...classes);
   if (saved) document.body.classList.add(saved);
 
-  const picker = document.getElementById("reading-profile");
+  const picker = document.getElementById(pickerId);
   if (!picker) return;
   picker.value = saved;
   picker.addEventListener("change", () => {
-    document.body.classList.remove(...CLASSES);
+    document.body.classList.remove(...classes);
     if (picker.value) document.body.classList.add(picker.value);
-    if (picker.value) localStorage.setItem(KEY, picker.value);
-    else localStorage.removeItem(KEY);
+    if (picker.value) localStorage.setItem(key, picker.value);
+    else localStorage.removeItem(key);
   });
-})();
+}
+
+// Reading profile (compact/standard/relaxed), reader only.
+bodyClassPreference("scrimshaw-reading-profile", "reading-profile", ["reading-compact", "reading-relaxed"]);
+
+// Density (standard/compact), Read Later list only.
+bodyClassPreference("scrimshaw-density-mode", "density-mode", ["density-compact"]);
 
 // Keyboard navigation for the item list and reader.
 (function keyboardNav() {
