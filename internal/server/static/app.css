@@ -30,6 +30,17 @@
   --gl-mark-bg: #c79a3d40;
   --gl-shadow: 0 1px 2px #16222a0f, 0 6px 20px #16222a0a;
 
+  /* Restrained tag palette: a tag's color is hashed from its name (see
+     tagChipClass), not chosen or stored, so it stays scannable without any
+     per-tag configuration. Muted on purpose, distinct from the semantic
+     success/warn/error/accent hues above. */
+  --gl-tag-1: #6b7f99;
+  --gl-tag-2: #6f8f6b;
+  --gl-tag-3: #9c7d54;
+  --gl-tag-4: #a06b74;
+  --gl-tag-5: #5f8f8a;
+  --gl-tag-6: #8a7396;
+
   --gl-radius: 6px;
   --gl-radius-sm: 4px;
   --gl-radius-pill: 999px;
@@ -67,6 +78,13 @@
     --gl-focus-ring: 0 0 0 3px #3d97ff40;
     --gl-mark-bg: #c79a3d4d;
     --gl-shadow: 0 1px 2px #00000040, 0 6px 24px #00000033;
+
+    --gl-tag-1: #93a7c2;
+    --gl-tag-2: #96b892;
+    --gl-tag-3: #c4a179;
+    --gl-tag-4: #c8929a;
+    --gl-tag-5: #86b7b1;
+    --gl-tag-6: #b096bf;
   }
 }
 
@@ -290,6 +308,22 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 .tagbar { color: var(--gl-text-muted); font-size: 0.9rem; margin-bottom: var(--gl-space-4); }
 .tagbar a { display: inline-block; margin-right: var(--gl-space-2); }
+
+/* Tag chips: same quiet tinted-chip language as .badge, but hashed per tag
+   name (see tagChipClass) instead of a fixed color per badge type. */
+.tag-chip {
+  display: inline-block;
+  padding: 0.08rem var(--gl-space-2);
+  border-radius: var(--gl-radius-sm);
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+.tag-c1 { color: var(--gl-tag-1); background: color-mix(in srgb, var(--gl-tag-1) 14%, transparent); }
+.tag-c2 { color: var(--gl-tag-2); background: color-mix(in srgb, var(--gl-tag-2) 14%, transparent); }
+.tag-c3 { color: var(--gl-tag-3); background: color-mix(in srgb, var(--gl-tag-3) 14%, transparent); }
+.tag-c4 { color: var(--gl-tag-4); background: color-mix(in srgb, var(--gl-tag-4) 14%, transparent); }
+.tag-c5 { color: var(--gl-tag-5); background: color-mix(in srgb, var(--gl-tag-5) 14%, transparent); }
+.tag-c6 { color: var(--gl-tag-6); background: color-mix(in srgb, var(--gl-tag-6) 14%, transparent); }
 
 .pager { margin: var(--gl-space-6) 0; display: flex; gap: var(--gl-space-4); }
 .bulk-actions { margin-top: var(--gl-space-6); display: flex; flex-wrap: wrap; gap: var(--gl-space-3); }

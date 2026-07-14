@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"html"
 	"html/template"
 	"log/slog"
@@ -345,7 +346,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	} else if len(tagCounts) > 0 {
 		b.WriteString(`<p class="tagbar">Unread tags: `)
 		for _, count := range tagCounts {
-			fmt.Fprintf(&b, `<a href="/?view=%s&tag=%s">%s (%d)</a>`, url.QueryEscape(v.key), url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
+			fmt.Fprintf(&b, `<a class="%s" href="/?view=%s&tag=%s">%s (%d)</a>`, tagChipClass(count.Name), url.QueryEscape(v.key), url.QueryEscape(count.Name), template.HTMLEscapeString(count.Name), count.Count)
 		}
 		b.WriteString(`</p>`)
 	}
@@ -1095,7 +1096,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, notices se
 	if counts, err := s.store.AllTagCounts(r.Context()); err == nil && len(counts) > 0 {
 		b.WriteString(`<p class="tagbar">`)
 		for _, c := range counts {
-			fmt.Fprintf(&b, `%s (%d) `, template.HTMLEscapeString(c.Name), c.Count)
+			fmt.Fprintf(&b, `<span class="%s">%s (%d)</span> `, tagChipClass(c.Name), template.HTMLEscapeString(c.Name), c.Count)
 		}
 		b.WriteString(`</p>`)
 	}
@@ -1279,6 +1280,17 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n-1]) + "…"
+}
+
+const tagPaletteSize = 6
+
+// tagChipClass deterministically maps a tag name to one of a small fixed
+// palette (app.css's --gl-tag-1..6), so tags are scannable at a glance
+// without any per-tag color to configure or store.
+func tagChipClass(name string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(name))))
+	return fmt.Sprintf("tag-chip tag-c%d", h.Sum32()%tagPaletteSize+1)
 }
 
 func (s *Server) refreshFeed(w http.ResponseWriter, r *http.Request, _ string) {
