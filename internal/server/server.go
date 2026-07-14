@@ -607,6 +607,10 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/readlater"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="read_later" value="%s"><button%s>%s</button></form>`, item.ID, token, laterValue, starButtonAttr(item.ReadLater), laterLabel)
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/bookmark"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="bookmarked" value="%s"><button%s>%s</button></form>`, item.ID, token, bookmarkValue, starButtonAttr(item.Bookmarked), bookmarkLabel)
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/share"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="shared" value="%s"><button%s>%s</button></form>`, item.ID, token, shareValue, starButtonAttr(item.Shared), shareLabel)
+	// A display-only preference (remembered client-side in localStorage, not
+	// posted anywhere), so named presets beat a raw slider the same way the
+	// feed refresh-interval dropdown does.
+	b.WriteString(`<label class="reading-profile-picker">Reading <select id="reading-profile"><option value="">Standard</option><option value="reading-compact">Compact</option><option value="reading-relaxed">Relaxed</option></select></label>`)
 	b.WriteString(`</div>`)
 
 	// Tags editor.

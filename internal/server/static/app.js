@@ -5,6 +5,28 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/service-worker.js").catch(() => {});
 }
 
+// Reading profile (compact/standard/relaxed): a client-only preference, not
+// synced to the server, applied as early as possible (app.js is a deferred
+// script, so this is the earliest point CSP's no-inline-script policy allows)
+// to keep the flash of the default profile brief.
+(function readingProfile() {
+  const KEY = "scrimshaw-reading-profile";
+  const CLASSES = ["reading-compact", "reading-relaxed"];
+  const saved = localStorage.getItem(KEY) || "";
+  document.body.classList.remove(...CLASSES);
+  if (saved) document.body.classList.add(saved);
+
+  const picker = document.getElementById("reading-profile");
+  if (!picker) return;
+  picker.value = saved;
+  picker.addEventListener("change", () => {
+    document.body.classList.remove(...CLASSES);
+    if (picker.value) document.body.classList.add(picker.value);
+    if (picker.value) localStorage.setItem(KEY, picker.value);
+    else localStorage.removeItem(KEY);
+  });
+})();
+
 // Keyboard navigation for the item list and reader.
 (function keyboardNav() {
   let awaitingG = false, cursor = 0;

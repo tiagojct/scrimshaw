@@ -41,6 +41,13 @@
   --gl-tag-5: #5f8f8a;
   --gl-tag-6: #8a7396;
 
+  /* Reading profile: named presets (see .reading-compact/.reading-relaxed
+     below), not a raw slider, matching the feed refresh-interval dropdown's
+     fixed-options pattern. These defaults are today's unnamed "standard". */
+  --gl-reader-font-size: 1.22rem;
+  --gl-reader-line-height: 1.72;
+  --gl-reader-p-gap: var(--gl-space-6);
+
   --gl-radius: 6px;
   --gl-radius-sm: 4px;
   --gl-radius-pill: 999px;
@@ -340,15 +347,19 @@ article { max-width: 44rem; }
   border-bottom: 1px solid var(--gl-border);
 }
 .reader-actions form { margin: 0; }
+.reading-profile-picker { display: flex; align-items: center; gap: var(--gl-space-1); font-size: 0.9rem; color: var(--gl-text-muted); margin-left: auto; }
+.reading-profile-picker select { font-size: 0.9rem; }
 article .meta { color: var(--gl-text-muted); font-size: 0.95rem; margin: 0 0 var(--gl-space-2); display: flex; flex-wrap: wrap; align-items: center; gap: var(--gl-space-2); }
 article .meta a { color: var(--gl-accent); }
 .reader {
   font-family: var(--gl-font-serif);
-  font-size: 1.22rem;
-  line-height: 1.72;
+  font-size: var(--gl-reader-font-size);
+  line-height: var(--gl-reader-line-height);
   margin-top: var(--gl-space-6);
 }
-.reader p { margin: 0 0 var(--gl-space-6); text-wrap: pretty; }
+.reader p { margin: 0 0 var(--gl-reader-p-gap); text-wrap: pretty; }
+body.reading-compact { --gl-reader-font-size: 1.08rem; --gl-reader-line-height: 1.5; --gl-reader-p-gap: var(--gl-space-4); }
+body.reading-relaxed { --gl-reader-font-size: 1.32rem; --gl-reader-line-height: 1.92; --gl-reader-p-gap: var(--gl-space-8); }
 .reader img { max-width: 100%; height: auto; border-radius: var(--gl-radius-sm); display: block; margin: var(--gl-space-6) auto; }
 .reader figure { margin: var(--gl-space-6) 0; }
 .reader figcaption { font-family: var(--gl-font-sans); font-size: 0.85rem; color: var(--gl-text-muted); text-align: center; margin-top: var(--gl-space-2); }
