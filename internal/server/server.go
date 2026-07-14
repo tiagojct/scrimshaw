@@ -109,6 +109,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items/{id}/bookmark", s.withSession(s.bookmarkItem))
 	mux.HandleFunc("GET /triage", s.withSession(s.triage))
 	mux.HandleFunc("GET /habits", s.withSession(s.habits))
+	mux.HandleFunc("POST /saved-views", s.withSession(s.createSavedView))
+	mux.HandleFunc("POST /saved-views/{id}/delete", s.withSession(s.deleteSavedView))
 	mux.HandleFunc("POST /triage/{id}/bookmark", s.withSession(s.triageBookmark))
 	mux.HandleFunc("POST /items/{id}/highlights", s.withSession(s.highlight))
 	mux.HandleFunc("POST /items/{id}/tags", s.withSession(s.setTags))
@@ -348,6 +350,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		// anywhere), same pattern as the reader's reading-profile picker.
 		b.WriteString(`<label class="density-picker">Density <select id="density-mode"><option value="">Standard</option><option value="density-compact">Compact</option></select></label>`)
 	}
+	// A saved view is just a label on the current URL — view/tag/sort/search
+	// already encode fully into it, so there's no separate filter to build.
+	fmt.Fprintf(&b, `<form class="inline-action pin-view" method="post" action="/saved-views"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="path" value="%s"><input name="label" placeholder="Name this view" required><button>Pin</button></form>`,
+		template.HTMLEscapeString(csrf(r)), template.HTMLEscapeString(r.URL.RequestURI()))
 	b.WriteString(`</div>`)
 	if tag != "" {
 		clear := "/?view=" + url.QueryEscape(v.key)
@@ -447,6 +453,11 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		s.internalError(w, err)
 		return
 	}
+	savedViews, err := s.store.AllSavedViews(r.Context())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
 
 	var b strings.Builder
 	b.WriteString(dashboardToolbar)
@@ -464,6 +475,15 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 	}
 	b.WriteString(`</div>`)
 	b.WriteString(`<p class="note"><a href="/habits">Reading habits</a></p>`)
+	if len(savedViews) > 0 {
+		token := template.HTMLEscapeString(csrf(r))
+		b.WriteString(`<section class="dash-section"><h2>Saved views</h2><ul class="saved-views">`)
+		for _, view := range savedViews {
+			fmt.Fprintf(&b, `<li><a href="%s">%s</a><form method="post" action="/saved-views/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="link-btn" aria-label="Remove %s">&times;</button></form></li>`,
+				template.HTMLEscapeString(view.Path), template.HTMLEscapeString(view.Label), view.ID, token, template.HTMLEscapeString(view.Label))
+		}
+		b.WriteString(`</ul></section>`)
+	}
 
 	section := func(title, href, moreLabel string, items []store.Item) {
 		fmt.Fprintf(&b, `<section class="dash-section"><h2><a href="%s">%s</a></h2>`, href, title)
@@ -927,6 +947,36 @@ func (s *Server) triageBookmark(w http.ResponseWriter, r *http.Request, _ string
 	}
 	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther)
 }
+
+// createSavedView pins a label to the current view's URL. The submitted path
+// is passed through safeReturn (same guard as the reader's "back" redirect)
+// before it's ever stored, since a saved view is later rendered as a plain
+// <a href> on the dashboard.
+func (s *Server) createSavedView(w http.ResponseWriter, r *http.Request, _ string) {
+	path := safeReturn(r.FormValue("path"))
+	label := strings.TrimSpace(r.FormValue("label"))
+	if label != "" {
+		if _, err := s.store.AddSavedView(r.Context(), label, path); err != nil {
+			s.internalError(w, err)
+			return
+		}
+	}
+	http.Redirect(w, r, path, http.StatusSeeOther)
+}
+
+func (s *Server) deleteSavedView(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.DeleteSavedView(r.Context(), id); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func (s *Server) highlight(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {

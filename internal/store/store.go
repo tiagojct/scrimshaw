@@ -828,6 +828,45 @@ func (s *Store) SetReadLater(ctx context.Context, id int64, readLater bool) erro
 	return err
 }
 
+// SavedView is a label pinned to a URL the app already generates — see the
+// 007 migration comment for why there's no separate filter representation.
+type SavedView struct {
+	ID    int64
+	Label string
+	Path  string
+}
+
+func (s *Store) AddSavedView(ctx context.Context, label, path string) (int64, error) {
+	result, err := s.DB.ExecContext(ctx, "INSERT INTO saved_views(label, path, created_at) VALUES (?, ?, ?)",
+		label, path, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (s *Store) AllSavedViews(ctx context.Context) ([]SavedView, error) {
+	rows, err := s.DB.QueryContext(ctx, "SELECT id, label, path FROM saved_views ORDER BY created_at")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var views []SavedView
+	for rows.Next() {
+		var v SavedView
+		if err := rows.Scan(&v.ID, &v.Label, &v.Path); err != nil {
+			return nil, err
+		}
+		views = append(views, v)
+	}
+	return views, rows.Err()
+}
+
+func (s *Store) DeleteSavedView(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, "DELETE FROM saved_views WHERE id=?", id)
+	return err
+}
+
 func (s *Store) SetBookmarked(ctx context.Context, id int64, bookmarked bool) error {
 	_, err := s.DB.ExecContext(ctx, "UPDATE items SET bookmarked=? WHERE id=?", bookmarked, id)
 	return err

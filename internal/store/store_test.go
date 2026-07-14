@@ -403,6 +403,31 @@ func TestUnreadTagCountsScopedToCollection(t *testing.T) {
 	}
 }
 
+func TestSavedViews(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	id, err := s.AddSavedView(ctx, "Unread spirometry", "/?view=all&tag=spirometry&sort=unread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	views, err := s.AllSavedViews(ctx)
+	if err != nil || len(views) != 1 || views[0].ID != id || views[0].Label != "Unread spirometry" {
+		t.Fatalf("AllSavedViews = %v, err=%v", views, err)
+	}
+
+	if err := s.DeleteSavedView(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if views, err := s.AllSavedViews(ctx); err != nil || len(views) != 0 {
+		t.Fatalf("views after delete = %v, err=%v", views, err)
+	}
+}
+
 func TestReadingHabitsBucketsReadAndReconstructsBacklog(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")

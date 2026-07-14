@@ -258,6 +258,14 @@ h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-
 .chart-value { font-size: 9px; fill: var(--gl-text-muted); text-anchor: middle; font-family: var(--gl-font-sans); }
 .chart-label { font-size: 9px; fill: var(--gl-text-muted); text-anchor: middle; font-family: var(--gl-font-sans); }
 
+/* A saved view is just a label on a URL — see /saved-views. */
+.saved-views li { display: flex; align-items: center; justify-content: space-between; gap: var(--gl-space-2); padding: var(--gl-space-2) 0; border-bottom: 1px solid var(--gl-border-soft); }
+.saved-views form { margin: 0; }
+.link-btn { background: none; border: none; padding: 0 var(--gl-space-1); color: var(--gl-text-muted); font-size: 1.1rem; line-height: 1; }
+.link-btn:hover { color: var(--gl-error); }
+.pin-view { margin: 0; display: flex; align-items: center; gap: var(--gl-space-1); }
+.pin-view input { padding: var(--gl-space-1) var(--gl-space-2); font-size: 0.9rem; width: 10rem; }
+
 /* Triage: one item at a time, deliberately narrower than the list view so
    it reads as a distinct, focused mode rather than another list row. */
 .triage-progress { color: var(--gl-text-muted); font-size: 0.9rem; }

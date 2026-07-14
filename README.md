@@ -38,6 +38,8 @@ The interface is a set of views over that one table:
 
 **Reading habits.** `/habits` (linked from the dashboard) charts items read and Read Later backlog size over the last 12 weeks, plus your most-used tags — a motivational glance, not a workflow.
 
+**Saved views.** Any list has a "Pin this view" field — it saves a label for the exact URL you're looking at (view, tag, sort, and search all already live in the querystring), listed on the dashboard for one-click access later.
+
 ## Features
 
 Reading
