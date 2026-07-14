@@ -786,6 +786,43 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	return st, err
 }
 
+// WeekStat is one rolling 7-day bucket of reading activity.
+type WeekStat struct {
+	Start   time.Time
+	Read    int // items marked read whose read_at falls in [Start, Start+7d)
+	Backlog int // read_later items still unread as of Start+7d — reconstructed
+	// from added_at/read_at, not a tracked time series, so it only reflects
+	// items that still exist (a deleted item leaves no trace in the past).
+}
+
+// ReadingHabits buckets read activity and backlog size into `weeks` rolling
+// 7-day windows ending now, oldest first. Deliberately rolling rather than
+// calendar weeks (Mon-Sun) to sidestep ISO-week/timezone edge cases for a
+// stats page where exact week boundaries don't matter.
+func (s *Store) ReadingHabits(ctx context.Context, weeks int) ([]WeekStat, error) {
+	if weeks < 1 {
+		weeks = 12
+	}
+	now := time.Now().UTC()
+	stats := make([]WeekStat, weeks)
+	for i := 0; i < weeks; i++ {
+		end := now.AddDate(0, 0, -7*(weeks-1-i))
+		start := end.AddDate(0, 0, -7)
+		endStr, startStr := end.Format(time.RFC3339), start.Format(time.RFC3339)
+		var read, backlog int
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE read_at IS NOT NULL AND read_at >= ? AND read_at < ?`,
+			startStr, endStr).Scan(&read); err != nil {
+			return nil, err
+		}
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE read_later=1 AND added_at <= ? AND (read_at IS NULL OR read_at > ?)`,
+			endStr, endStr).Scan(&backlog); err != nil {
+			return nil, err
+		}
+		stats[i] = WeekStat{Start: start, Read: read, Backlog: backlog}
+	}
+	return stats, nil
+}
+
 func (s *Store) SetReadLater(ctx context.Context, id int64, readLater bool) error {
 	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_later=? WHERE id=?", readLater, id)
 	return err

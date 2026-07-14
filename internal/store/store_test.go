@@ -403,6 +403,45 @@ func TestUnreadTagCountsScopedToCollection(t *testing.T) {
 	}
 }
 
+func TestReadingHabitsBucketsReadAndReconstructsBacklog(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	id, err := s.InsertManualItem(ctx, "https://ex/habit", "Habit item", "", "", "<p>body</p>", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	addedAt := now.AddDate(0, 0, -25).Format(time.RFC3339)
+	readAt := now.AddDate(0, 0, -3).Format(time.RFC3339)
+	if _, err := s.DB.ExecContext(ctx, "UPDATE items SET added_at=?, read_at=? WHERE id=?", addedAt, readAt, id); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.ReadingHabits(ctx, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 4 {
+		t.Fatalf("got %d buckets, want 4", len(stats))
+	}
+	// Added 25 days ago (bucket 0's window), read 3 days ago (bucket 3's window).
+	wantRead := []int{0, 0, 0, 1}
+	wantBacklog := []int{1, 1, 1, 0} // "still unread" at each bucket's end, until it's actually read
+	for i, st := range stats {
+		if st.Read != wantRead[i] {
+			t.Errorf("bucket %d Read = %d, want %d", i, st.Read, wantRead[i])
+		}
+		if st.Backlog != wantBacklog[i] {
+			t.Errorf("bucket %d Backlog = %d, want %d", i, st.Backlog, wantBacklog[i])
+		}
+	}
+}
+
 func TestListPageSinceUntilFiltersByDate(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")

@@ -253,6 +253,11 @@ h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-
 .dash-section h2 a { color: var(--gl-text); text-decoration: none; }
 .dash-section h2 a:hover { color: var(--gl-accent); }
 
+/* Reading habits: minimal inline SVG bars, no charting library. */
+.chart-bar { fill: var(--gl-accent); }
+.chart-value { font-size: 9px; fill: var(--gl-text-muted); text-anchor: middle; font-family: var(--gl-font-sans); }
+.chart-label { font-size: 9px; fill: var(--gl-text-muted); text-anchor: middle; font-family: var(--gl-font-sans); }
+
 /* Triage: one item at a time, deliberately narrower than the list view so
    it reads as a distinct, focused mode rather than another list row. */
 .triage-progress { color: var(--gl-text-muted); font-size: 0.9rem; }

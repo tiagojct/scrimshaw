@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,6 +108,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items/{id}/readlater", s.withSession(s.readLaterItem))
 	mux.HandleFunc("POST /items/{id}/bookmark", s.withSession(s.bookmarkItem))
 	mux.HandleFunc("GET /triage", s.withSession(s.triage))
+	mux.HandleFunc("GET /habits", s.withSession(s.habits))
 	mux.HandleFunc("POST /triage/{id}/bookmark", s.withSession(s.triageBookmark))
 	mux.HandleFunc("POST /items/{id}/highlights", s.withSession(s.highlight))
 	mux.HandleFunc("POST /items/{id}/tags", s.withSession(s.setTags))
@@ -461,6 +463,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		stat("/?view=bookmarks", st.BrokenLinks, "Broken links")
 	}
 	b.WriteString(`</div>`)
+	b.WriteString(`<p class="note"><a href="/habits">Reading habits</a></p>`)
 
 	section := func(title, href, moreLabel string, items []store.Item) {
 		fmt.Fprintf(&b, `<section class="dash-section"><h2><a href="%s">%s</a></h2>`, href, title)
@@ -492,6 +495,79 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 
 	b.WriteString(`<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><button>Log out</button></form>`)
 	s.render(w, "Dashboard", b.String(), "")
+}
+
+// habits shows reading activity and Read Later backlog over the last 12
+// weeks, plus the most-used tags — a low-stakes motivational page, not a
+// workflow, so it's fine that it's built from data already stored rather
+// than a tracked time series.
+func (s *Server) habits(w http.ResponseWriter, r *http.Request, _ string) {
+	stats, err := s.store.ReadingHabits(r.Context(), 12)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	tagCounts, err := s.store.AllTagCounts(r.Context())
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	slices.SortFunc(tagCounts, func(a, b store.Count) int { return b.Count - a.Count })
+	if len(tagCounts) > 8 {
+		tagCounts = tagCounts[:8]
+	}
+
+	var b strings.Builder
+	b.WriteString(dashboardToolbar)
+	b.WriteString(`<h1>Reading habits</h1>`)
+	b.WriteString(`<section class="dash-section"><h2>Items read per week</h2>`)
+	b.WriteString(string(weeklyBarChart(stats, func(st store.WeekStat) int { return st.Read })))
+	b.WriteString(`</section>`)
+	b.WriteString(`<section class="dash-section"><h2>Read Later backlog</h2><p class="note">Reconstructed from added/read timestamps, not a tracked history — an item deleted since then leaves no trace here.</p>`)
+	b.WriteString(string(weeklyBarChart(stats, func(st store.WeekStat) int { return st.Backlog })))
+	b.WriteString(`</section>`)
+	if len(tagCounts) > 0 {
+		b.WriteString(`<section class="dash-section"><h2>Top tags</h2><p class="tagbar">`)
+		for _, c := range tagCounts {
+			fmt.Fprintf(&b, `<span class="%s">%s (%d)</span> `, tagChipClass(c.Name), template.HTMLEscapeString(c.Name), c.Count)
+		}
+		b.WriteString(`</p></section>`)
+	}
+	s.render(w, "Reading habits", b.String(), "")
+}
+
+// weeklyBarChart renders a minimal inline SVG bar chart — no charting
+// library, matching the no-npm-dependency rule. All values are
+// server-computed integers/dates, never user input, so building the SVG by
+// string concatenation carries no injection risk here.
+func weeklyBarChart(stats []store.WeekStat, value func(store.WeekStat) int) template.HTML {
+	max := 1
+	for _, st := range stats {
+		if v := value(st); v > max {
+			max = v
+		}
+	}
+	const barW, gap, chartH, labelH = 22, 10, 70, 28
+	width := len(stats)*(barW+gap) + gap
+	height := chartH + labelH
+	var b strings.Builder
+	fmt.Fprintf(&b, `<svg viewBox="0 0 %d %d" width="%d" height="%d" role="img" aria-label="Weekly chart">`, width, height, width, height)
+	for i, st := range stats {
+		v := value(st)
+		barH := int(float64(v) / float64(max) * chartH)
+		if barH < 2 {
+			barH = 2
+		}
+		x, y := gap+i*(barW+gap), chartH-barH
+		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="%d" height="%d" rx="2" class="chart-bar"><title>%s: %d</title></rect>`,
+			x, y, barW, barH, st.Start.Format("Jan 2"), v)
+		fmt.Fprintf(&b, `<text x="%d" y="%d" class="chart-value">%d</text>`, x+barW/2, chartH+12, v)
+		if i == 0 || i == len(stats)-1 {
+			fmt.Fprintf(&b, `<text x="%d" y="%d" class="chart-label">%s</text>`, x+barW/2, chartH+26, st.Start.Format("Jan 2"))
+		}
+	}
+	b.WriteString(`</svg>`)
+	return template.HTML(b.String())
 }
 
 // itemView describes one tab over the shared items table.

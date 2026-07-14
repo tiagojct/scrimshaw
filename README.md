@@ -36,6 +36,8 @@ The interface is a set of views over that one table:
 
 **Triage.** `/triage` is a fast, one-item-at-a-time way to burn down the Read Later queue instead of scrolling the list: Keep moves on without changing anything, Skip marks it read, Bookmark keeps the link but takes it out of the queue. Keyboard: `k` keep, `x` skip, `b` bookmark.
 
+**Reading habits.** `/habits` (linked from the dashboard) charts items read and Read Later backlog size over the last 12 weeks, plus your most-used tags — a motivational glance, not a workflow.
+
 ## Features
 
 Reading
