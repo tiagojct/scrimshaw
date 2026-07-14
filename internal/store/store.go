@@ -52,10 +52,10 @@ func scanItem(rows interface{ Scan(...any) error }) (Item, error) {
 }
 
 type Feed struct {
-	ID                                               int64
-	URL, Title, ETag, LastModified, LastError, Rules string
-	RefreshInterval                                  time.Duration
-	FetchFullContent, AutoSnapshot, Disabled         bool
+	ID                                                            int64
+	URL, Title, ETag, LastModified, LastError, Rules, FaviconURL string
+	RefreshInterval                                              time.Duration
+	FetchFullContent, AutoSnapshot, Disabled                     bool
 }
 
 type ListOptions struct {
@@ -188,12 +188,12 @@ func (s *Store) AddFeed(ctx context.Context, rawURL string, refresh time.Duratio
 
 // feedColumns is the shared projection for reading feeds; keep scanFeed
 // aligned with this list (mirrors itemColumns/scanItem for items).
-const feedColumns = `id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled, rules`
+const feedColumns = `id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled, rules, favicon_url`
 
 func scanFeed(row interface{ Scan(...any) error }) (Feed, error) {
 	var f Feed
 	var seconds, full, snapshot, disabled int
-	err := row.Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &full, &snapshot, &disabled, &f.Rules)
+	err := row.Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &full, &snapshot, &disabled, &f.Rules, &f.FaviconURL)
 	f.RefreshInterval, f.FetchFullContent, f.AutoSnapshot, f.Disabled = time.Duration(seconds)*time.Second, full != 0, snapshot != 0, disabled != 0
 	return f, err
 }
@@ -217,6 +217,14 @@ func (s *Store) SetFeedRefresh(ctx context.Context, id int64, refresh time.Durat
 // on the 006 migration for the line format).
 func (s *Store) SetFeedRules(ctx context.Context, id int64, rules string) error {
 	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET rules=? WHERE id=?", rules, id)
+	return err
+}
+
+// SetFeedFavicon records a feed's discovered favicon URL (see
+// feeds.DiscoverFavicon). Empty means discovery found nothing; the UI falls
+// back to a generated monogram rather than leaving a blank space.
+func (s *Store) SetFeedFavicon(ctx context.Context, id int64, url string) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET favicon_url=? WHERE id=?", url, id)
 	return err
 }
 

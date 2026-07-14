@@ -65,7 +65,9 @@ Feeds that behave
 - Per-feed refresh interval (15 minutes to daily), configurable in the UI
 - Conditional requests (ETag / Last-Modified) and cross-post deduplication
 - Optional full-article fetch and auto-snapshot per feed
-- Failure handling with auto-disable after repeated errors; manual **Refresh** (single or all) that also revives a disabled feed
+- Content rules: `skip <keyword or /regex/>` to drop noisy entries, `tag:<name> <keyword or /regex/>` to auto-tag matches, one per line in the feed's settings
+- Failure handling with auto-disable after repeated errors; manual **Refresh** (single or all) that also revives a disabled feed. A feed URL that permanently moves (301/308) is followed and updated automatically
+- Favicons, fetched once at subscribe time; a feed without one gets a generated monogram instead of a blank space
 - A dead-link checker that flags bookmarks whose URL no longer resolves
 
 Publishing and portability

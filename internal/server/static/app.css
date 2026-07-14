@@ -499,6 +499,23 @@ mark.hl {
 .feed-actions { display: flex; align-items: flex-start; gap: var(--gl-space-2); }
 .feed-actions .inline-action { margin: 0; }
 .feed-actions > form button, .feed-settings > summary { font-size: 0.85rem; padding: var(--gl-space-1) var(--gl-space-3); }
+
+/* Favicon or, when none was found, a generated monogram tile in the same
+   hash palette as tag chips (feedIcon/tagChipClass), so the list stays
+   visually consistent either way. */
+.favicon { border-radius: var(--gl-radius-sm); vertical-align: -3px; margin-right: var(--gl-space-2); }
+.favicon-mono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--gl-radius-sm);
+  font-size: 0.65rem;
+  font-weight: 700;
+  vertical-align: -3px;
+  margin-right: var(--gl-space-2);
+}
 .feed-settings { position: relative; }
 .feed-settings summary {
   display: inline-block;

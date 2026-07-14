@@ -1404,11 +1404,21 @@ func (s *Server) newFeed(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, "Add a feed", feedFormBody(template.HTMLEscapeString(csrf(r))), "")
 }
 func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, _ string) {
-	_, err := s.store.AddFeed(r.Context(), r.FormValue("url"), time.Hour, strings.Split(r.FormValue("tags"), ","))
+	id, err := s.store.AddFeed(r.Context(), r.FormValue("url"), time.Hour, strings.Split(r.FormValue("tags"), ","))
 	if err != nil {
 		s.log.Warn("feed subscription failed", "error", err)
 		s.render(w, "Add a feed", feedFormBody(template.HTMLEscapeString(csrf(r))), "Could not subscribe. Check that the URL is valid.")
 		return
+	}
+	// Best-effort and one-time: not finding a favicon is a normal outcome for
+	// many sites (the UI falls back to a monogram), not something to retry or
+	// surface to the user.
+	if s.cfg.Fetcher != nil {
+		if favicon := feeds.DiscoverFavicon(r.Context(), s.cfg.Fetcher, r.FormValue("url")); favicon != "" {
+			if err := s.store.SetFeedFavicon(r.Context(), id, favicon); err != nil {
+				s.log.Warn("store feed favicon failed", "feed_id", id, "error", err)
+			}
+		}
 	}
 	http.Redirect(w, r, "/feeds", http.StatusSeeOther)
 }
@@ -1477,8 +1487,8 @@ func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
 			}
 			options += fmt.Sprintf(`<option value="%d"%s>%s</option>`, o.Seconds, sel, o.Label)
 		}
-		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button class="primary">Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
-			template.HTMLEscapeString(f.URL), template.HTMLEscapeString(title), meta,
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button class="primary">Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
+			template.HTMLEscapeString(f.URL), feedIcon(title, f.FaviconURL), template.HTMLEscapeString(title), meta,
 			f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), template.HTMLEscapeString(f.Rules), f.ID, token)
 	}
 	b.WriteString(`</ul>`)
@@ -1509,6 +1519,21 @@ func tagChipClass(name string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(name))))
 	return fmt.Sprintf("tag-chip tag-c%d", h.Sum32()%tagPaletteSize+1)
+}
+
+// feedIcon renders a feed's real favicon (proxied through /images the same
+// as any other fetched image — cached, SSRF-guarded, SVG rejected) when one
+// was discovered at subscribe time, or a generated monogram — same hash
+// palette as tagChipClass, for visual consistency — otherwise.
+func feedIcon(title, faviconURL string) string {
+	if faviconURL != "" {
+		return fmt.Sprintf(`<img class="favicon" src="/images?url=%s" alt="" width="16" height="16" loading="lazy">`, url.QueryEscape(faviconURL))
+	}
+	letter := "?"
+	if r := []rune(strings.TrimSpace(title)); len(r) > 0 {
+		letter = strings.ToUpper(string(r[0]))
+	}
+	return fmt.Sprintf(`<span class="favicon-mono %s" aria-hidden="true">%s</span>`, tagChipClass(title), template.HTMLEscapeString(letter))
 }
 
 func (s *Server) refreshFeed(w http.ResponseWriter, r *http.Request, _ string) {
