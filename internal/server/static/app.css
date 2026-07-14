@@ -396,6 +396,34 @@ mark.hl {
 .highlight-list { margin-top: var(--gl-space-8); max-width: 44rem; }
 .highlight-list h2 { font-size: 1.3rem; }
 .highlight-list li { padding: var(--gl-space-3) 0; border-bottom: 1px solid var(--gl-border-soft); }
+
+/* Keyboard shortcut help, toggled by "?". */
+.shortcuts-help {
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  background: var(--gl-surface-raised);
+  color: var(--gl-text);
+  box-shadow: var(--gl-shadow);
+  padding: var(--gl-space-6);
+  max-width: 24rem;
+}
+.shortcuts-help::backdrop { background: #16222a66; }
+.shortcuts-help h2 { margin-top: 0; font-size: 1.1rem; }
+.shortcuts-help dl { display: grid; grid-template-columns: auto 1fr; gap: var(--gl-space-2) var(--gl-space-4); margin: var(--gl-space-4) 0; }
+.shortcuts-help dt { white-space: nowrap; }
+.shortcuts-help dd { margin: 0; color: var(--gl-text-muted); }
+.shortcuts-help kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  text-align: center;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius-sm);
+  background: var(--gl-surface);
+  font-family: var(--gl-font-mono);
+  font-size: 0.82rem;
+}
+.shortcuts-help-close { margin-top: var(--gl-space-2); }
 .highlight-list q { color: var(--gl-text); font-family: var(--gl-font-serif); }
 .highlight-list .note { color: var(--gl-text-muted); font-size: 0.95rem; margin: var(--gl-space-1) 0 0; }
 .manual-highlight { margin-top: var(--gl-space-6); }

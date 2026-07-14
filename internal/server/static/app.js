@@ -25,7 +25,18 @@ if ("serviceWorker" in navigator) {
     else if (e.key === "m") { document.querySelector(".read-form")?.requestSubmit(); }
     else if (e.key === "s") { document.querySelector(".star-form")?.requestSubmit(); }
     else if (e.key === "v") { document.querySelector(".original-link")?.click(); }
+    else if (e.key === "?") { document.getElementById("shortcuts-help")?.showModal(); e.preventDefault(); }
   });
+})();
+
+// Keyboard shortcut help dialog, opened with "?" above.
+(function shortcutsHelp() {
+  const dialog = document.getElementById("shortcuts-help");
+  if (!dialog) return;
+  dialog.querySelector(".shortcuts-help-close")?.addEventListener("click", () => dialog.close());
+  // A click that lands on the <dialog> element itself (not its content box)
+  // is a backdrop click, since the dialog only sizes to its content.
+  dialog.addEventListener("click", e => { if (e.target === dialog) dialog.close(); });
 })();
 
 // Highlights: render saved highlights inside the article, and let the reader

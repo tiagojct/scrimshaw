@@ -83,6 +83,8 @@ In list views: `j` / `k` next / previous, `o` open the focused item, `/` focus s
 
 In the reader: `m` mark read, `s` star, `v` open the original. Select text to highlight it.
 
+Press `?` anywhere to open an in-app shortcut reference.
+
 ## Install
 
 ### Docker (recommended)
