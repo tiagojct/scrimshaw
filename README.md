@@ -13,7 +13,7 @@ Miniflux, linkding, and readeck each do one of these jobs well, but they are thr
 Everything lives in a single `items` table. What distinguishes an item is a small set of flags, not a separate table:
 
 - **Source** — `feed` (from a subscription) or `manual` (you added it).
-- **Read later** — the reading queue. Ticking it fetches and extracts the full article for a clean reader view.
+- **Read later** — the reading queue. Ticking it fetches and extracts the full article for a clean reader view. A PDF URL is extracted the same way (pure-Go text extraction, no upload UI, no external binary) — a scanned/image PDF with no text layer falls back to a plain link, same as a bot-blocked page would.
 - **Bookmarked** — the linklog. A link-only save, stored for reference.
 
 These are independent, so any item can be several things at once — you can bookmark a feed article *and* send it to read-later. On top of that each item carries **read/unread** (with a `read_at` timestamp), **starred**, **archived**, and **shared** states, flat **tags**, **highlights and notes**, and an optional **snapshot** (a self-contained HTML copy on disk).

@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	stdhtml "html"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
 	readability "github.com/go-shiori/go-readability"
+	"github.com/ledongthuc/pdf"
 	"golang.org/x/net/html"
 
 	"github.com/tiagojct/scrimshaw/internal/fetch"
@@ -124,9 +127,12 @@ func (s *Saver) Extract(ctx context.Context, id int64, rawURL string) error {
 }
 
 func (s *Saver) extract(ctx context.Context, rawURL string) (title, author, siteName, content, text string, err error) {
-	body, _, err := s.Client.Get(ctx, rawURL, "", "")
+	body, headers, err := s.Client.Get(ctx, rawURL, "", "")
 	if err != nil {
 		return "", "", "", "", "", err
+	}
+	if isPDF(headers.Get("Content-Type"), body) {
+		return extractPDF(body)
 	}
 	parsedURL, err := store.CanonicalURL(rawURL)
 	if err != nil {
@@ -145,6 +151,74 @@ func (s *Saver) extract(ctx context.Context, rawURL string) (title, author, site
 		return "", "", "", "", "", errors.New("page has no readable content")
 	}
 	return article.Title, article.Byline, article.SiteName, content, article.TextContent, nil
+}
+
+// isPDF reports whether a fetched response is a PDF: Content-Type first
+// (the reliable signal), falling back to the %PDF- file signature for
+// servers that mislabel it.
+func isPDF(contentType string, body []byte) bool {
+	if strings.Contains(strings.ToLower(contentType), "application/pdf") {
+		return true
+	}
+	return bytes.HasPrefix(body, []byte("%PDF-"))
+}
+
+// extractPDF turns a PDF's text into the same (title, author, siteName,
+// content, text) shape extract() returns for HTML articles. Pure Go
+// (github.com/ledongthuc/pdf), no external binary — the earlier PDF
+// deferral (see CLAUDE.md/SPEC.md) was specifically about poppler/yt-dlp-
+// style external binaries breaking the single-binary model, which doesn't
+// apply to a Go module dependency. Quality caveat this doesn't try to hide:
+// pure-Go extraction is well below poppler for complex layouts, and there's
+// no OCR path, so a scanned/image PDF yields no text and an error here.
+func extractPDF(body []byte) (title, author, siteName, content, text string, err error) {
+	r, err := pdf.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("open PDF: %w", err)
+	}
+	textReader, err := r.GetPlainText()
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("extract PDF text: %w", err)
+	}
+	raw, err := io.ReadAll(textReader)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	text = strings.TrimSpace(string(raw))
+	if text == "" {
+		return "", "", "", "", "", errors.New("PDF has no extractable text (likely a scanned/image PDF)")
+	}
+	return fallbackTitleFromText(text, 12), "", "", pdfHTML(text), text, nil
+}
+
+// pdfHTML wraps PDF-extracted plain text in escaped <p> tags (split on blank
+// lines) so the reader gets real paragraphs instead of one text blob with
+// literal newlines, then runs it through the same sanitizer as HTML content
+// — the text is escaped first, so any "<script>"-looking sequences in a
+// crafted PDF are inert text, not markup, by the time sanitize.HTML sees it.
+func pdfHTML(text string) string {
+	var b strings.Builder
+	for _, para := range strings.Split(text, "\n\n") {
+		para = strings.TrimSpace(para)
+		if para == "" {
+			continue
+		}
+		b.WriteString("<p>")
+		b.WriteString(stdhtml.EscapeString(para))
+		b.WriteString("</p>")
+	}
+	return sanitize.HTML(b.String())
+}
+
+// fallbackTitleFromText takes the first maxWords words of text as a title —
+// PDFs have no <title> element, only a real title, so the reader package
+// needs its own small version of feeds.fallbackTitle's word-truncation.
+func fallbackTitleFromText(text string, maxWords int) string {
+	words := strings.Fields(text)
+	if len(words) > maxWords {
+		return strings.Join(words[:maxWords], " ") + "…"
+	}
+	return strings.Join(words, " ")
 }
 
 // snapshotStyle is inlined (the CSP below allows no external stylesheet) so a
