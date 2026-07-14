@@ -32,7 +32,7 @@ The interface is a set of views over that one table:
 | **All** | Everything |
 | **Highlights** | Every passage and note, across all items |
 
-**Reading files things away.** Marking an item read also archives it and stamps the time, so it leaves the active list and moves to Archived. Starred and Bookmarks are permanent collections — an item stays in them even after it's read.
+**Reading files things away.** Marking an item read also archives it and stamps the time, so it leaves the active list and moves to Archived. Starred and Bookmarks are permanent collections — an item stays in them even after it's read. Opening a plain feed item marks it read automatically (like any feed reader) and it drops out of Feeds — unless you've already sent it to Read Later or Bookmarks, in which case opening it to peek doesn't dismiss it from that queue. Sending a feed item to Read Later always gives it a fresh unread state there, regardless of whatever happened to it in Feeds, and fetches the full article; a separate **Fetch full text** button gets you the full article without committing it to Read Later at all.
 
 **Triage.** `/triage` is a fast, one-item-at-a-time way to burn down the Read Later queue instead of scrolling the list: Keep moves on without changing anything, Skip marks it read, Bookmark keeps the link but takes it out of the queue. Keyboard: `k` keep, `x` skip, `b` bookmark.
 

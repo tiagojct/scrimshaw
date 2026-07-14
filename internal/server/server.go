@@ -106,6 +106,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items/{id}/star", s.withSession(s.star))
 	mux.HandleFunc("POST /items/{id}/share", s.withSession(s.shareItem))
 	mux.HandleFunc("POST /items/{id}/readlater", s.withSession(s.readLaterItem))
+	mux.HandleFunc("POST /items/{id}/extract", s.withSession(s.extractItem))
 	mux.HandleFunc("POST /items/{id}/bookmark", s.withSession(s.bookmarkItem))
 	mux.HandleFunc("GET /triage", s.withSession(s.triage))
 	mux.HandleFunc("GET /habits", s.withSession(s.habits))
@@ -599,7 +600,7 @@ type itemView struct {
 var viewOrder = []itemView{
 	{key: "today", label: "Today", includeArchived: true, showSource: true, empty: "Nothing published today yet."},
 	{key: "feeds", label: "Feeds", source: "feed", empty: "No feed items yet. Subscribe to a feed to start."},
-	{key: "later", label: "Read Later", readLater: "1", empty: "Nothing to read yet. Add a link, or send a feed item here with Read later.", showSource: true},
+	{key: "later", label: "Read Later", readLater: "1", empty: "Nothing to read yet. Add a link, or send a feed item here with Read later. An item leaves this list once marked read here; opening it elsewhere (e.g. in Feeds) doesn't count.", showSource: true},
 	{key: "bookmarks", label: "Bookmarks", bookmarked: "1", includeArchived: true, empty: "No bookmarks yet. Add a link, or bookmark a feed item.", showSource: true},
 	{key: "starred", label: "Starred", state: "starred", empty: "No starred items yet.", showSource: true},
 	{key: "archived", label: "Read", state: "archived", empty: "Nothing read yet. Reading an item files it here; it stays in Bookmarks or Starred if it was one.", showSource: true},
@@ -628,6 +629,22 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	if err != nil {
 		s.internalError(w, err)
 		return
+	}
+	// Opening a plain feed item dismisses it from Feeds, matching every
+	// mainstream feed reader's "open = read" convention. Scoped to items not
+	// also claimed for Read Later or Bookmarks: those are a separate reading
+	// commitment, so a peek here must not silently drop them out of that
+	// queue (see PromoteToReadLater's doc comment for the other half of this).
+	if item.Source == "feed" && item.ReadState == "unread" && !item.ReadLater && !item.Bookmarked {
+		if err := s.store.SetReadState(r.Context(), item.ID, "read"); err != nil {
+			s.internalError(w, err)
+			return
+		}
+		item, err = s.store.Item(r.Context(), id)
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
 	}
 	snapshotLink := ""
 	if item.SnapshotPath.Valid {
@@ -674,7 +691,7 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 
 	content := fmt.Sprintf(`<div class="reader">%s</div>`, sanitize.HTML(item.ExtractedText))
 	if item.ExtractedText == "" {
-		content = fmt.Sprintf(`<div class="reader"><p class="note">This is a stored link. Use Read later below to fetch the article for reading.</p><p><a href="%s" rel="noopener noreferrer">%s</a></p></div>`,
+		content = fmt.Sprintf(`<div class="reader"><p class="note">This is a stored link. Use Read later or Fetch full text below to get the article for reading.</p><p><a href="%s" rel="noopener noreferrer">%s</a></p></div>`,
 			template.HTMLEscapeString(item.URL), template.HTMLEscapeString(item.URL))
 	}
 	var b strings.Builder
@@ -716,6 +733,17 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/readlater"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="read_later" value="%s"><button%s>%s</button></form>`, item.ID, token, laterValue, starButtonAttr(item.ReadLater), laterLabel)
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/bookmark"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="bookmarked" value="%s"><button%s>%s</button></form>`, item.ID, token, bookmarkValue, starButtonAttr(item.Bookmarked), bookmarkLabel)
 	fmt.Fprintf(&b, `<form method="post" action="/items/%d/share"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="shared" value="%s"><button%s>%s</button></form>`, item.ID, token, shareValue, starButtonAttr(item.Shared), shareLabel)
+	if item.ExtractedText == "" || item.Source == "feed" {
+		// Independent of the Read Later toggle: fetch the full article without
+		// also committing it to that queue. Feed items always offer this even
+		// with content already present, since that content is just the feed's
+		// own summary/description, not a full extraction.
+		fetchLabel := "Fetch full text"
+		if item.ExtractedText != "" {
+			fetchLabel = "Fetch full article (replace summary)"
+		}
+		fmt.Fprintf(&b, `<form method="post" action="/items/%d/extract"><input type="hidden" name="csrf_token" value="%s"><button>%s</button></form>`, item.ID, token, fetchLabel)
+	}
 	// A display-only preference (remembered client-side in localStorage, not
 	// posted anywhere), so named presets beat a raw slider the same way the
 	// feed refresh-interval dropdown does.
@@ -758,7 +786,11 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 	fmt.Fprintf(&b, `<details class="manual-highlight"><summary>Add a note</summary><form method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="quote" value=""><label>Note <textarea name="note" rows="3" required placeholder="Your thoughts on this article"></textarea></label><button>Add note</button></form></details></section>`, item.ID, token)
 	fmt.Fprintf(&b, `<details class="danger"><summary>Delete this item</summary><p class="note">Permanently removes this item, its highlights, and its snapshot. This cannot be undone.</p><form method="post" action="/items/%d/delete"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="return" value="%s"><button class="danger-btn">Delete permanently</button></form></details>`, item.ID, token, template.HTMLEscapeString(backURL))
 	fmt.Fprintf(&b, `<script type="application/json" id="hl-data">%s</script>`, quotesJSON)
-	s.render(w, item.Title, b.String(), "")
+	notice := ""
+	if r.URL.Query().Get("extract_failed") == "1" {
+		notice = "Could not fetch the full article. The link may be blocked or unreachable."
+	}
+	s.render(w, item.Title, b.String(), notice)
 }
 func (s *Server) setReadState(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -836,6 +868,34 @@ func (s *Server) shareItem(w http.ResponseWriter, r *http.Request, _ string) {
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
 }
 
+// extractItem fetches an item's full article text without touching
+// read_later or bookmarked — the standalone counterpart to readLaterItem's
+// implicit fetch-on-promote, for reading the full text without committing
+// the item to any queue.
+func (s *Server) extractItem(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if s.cfg.Saver == nil {
+		s.internalError(w, errors.New("saver is not configured"))
+		return
+	}
+	item, err := s.store.Item(r.Context(), id)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	idStr := strconv.FormatInt(id, 10)
+	if err := s.cfg.Saver.Extract(r.Context(), id, item.URL); err != nil {
+		s.log.Warn("fetch full text failed", "item", id, "error", err)
+		http.Redirect(w, r, "/items/"+idStr+"?extract_failed=1", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/items/"+idStr, http.StatusSeeOther)
+}
+
 // readLaterItem promotes a stored link to Read Later (fetching the article if it
 // has none yet) or demotes a read-later item back to a bookmark.
 func (s *Server) readLaterItem(w http.ResponseWriter, r *http.Request, _ string) {
@@ -845,7 +905,12 @@ func (s *Server) readLaterItem(w http.ResponseWriter, r *http.Request, _ string)
 		return
 	}
 	readLater := r.FormValue("read_later") != "0"
-	if err := s.store.SetReadLater(r.Context(), id, readLater); err != nil {
+	if readLater {
+		if err := s.store.PromoteToReadLater(r.Context(), id); err != nil {
+			s.internalError(w, err)
+			return
+		}
+	} else if err := s.store.SetReadLater(r.Context(), id, false); err != nil {
 		s.internalError(w, err)
 		return
 	}
@@ -2283,7 +2348,7 @@ func (s *Server) mergeIntoExisting(ctx context.Context, rawURL string, readLater
 		return 0, err
 	}
 	if readLater {
-		if err := s.store.SetReadLater(ctx, id, true); err != nil {
+		if err := s.store.PromoteToReadLater(ctx, id); err != nil {
 			return 0, err
 		}
 		if item, err := s.store.Item(ctx, id); err == nil && item.ExtractedText == "" && s.cfg.Saver != nil {

@@ -836,6 +836,18 @@ func (s *Store) SetReadLater(ctx context.Context, id int64, readLater bool) erro
 	return err
 }
 
+// PromoteToReadLater flags an item for the Read Later queue and resets its
+// read/archived state to unread in the same statement. Promoting is a fresh
+// start in that queue, independent of whatever read state the item picked up
+// elsewhere (e.g. auto-marked read when opened as a plain feed item) —
+// without this reset, an already-archived item would flip read_later=1 but
+// never actually appear in the Read Later view, since that view excludes
+// archived items.
+func (s *Store) PromoteToReadLater(ctx context.Context, id int64) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE items SET read_later=1, read_state='unread', read_at=NULL, archived=0 WHERE id=?", id)
+	return err
+}
+
 // SavedView is a label pinned to a URL the app already generates — see the
 // 007 migration comment for why there's no separate filter representation.
 type SavedView struct {

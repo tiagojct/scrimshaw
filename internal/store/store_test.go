@@ -403,6 +403,63 @@ func TestUnreadTagCountsScopedToCollection(t *testing.T) {
 	}
 }
 
+func TestPromoteToReadLaterResetsArchivedState(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	feedID, err := s.AddFeed(ctx, "https://ex/feed", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertFeedItem(ctx, feedID, "https://ex/a", "Feed item", "", "body", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.ItemIDByURL(ctx, "https://ex/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the item having been opened and dismissed from Feeds already.
+	if err := s.SetReadState(ctx, id, "read"); err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.Item(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.ReadState != "read" || !item.Archived {
+		t.Fatalf("precondition: item should be read+archived, got read_state=%q archived=%v", item.ReadState, item.Archived)
+	}
+
+	if err := s.PromoteToReadLater(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	item, err = s.Item(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !item.ReadLater {
+		t.Fatal("PromoteToReadLater should set read_later")
+	}
+	if item.ReadState != "unread" || item.Archived || item.ReadAt.Valid {
+		t.Fatalf("promoting should reset read/archived state, got read_state=%q archived=%v read_at=%v", item.ReadState, item.Archived, item.ReadAt)
+	}
+
+	// The item must now actually appear in the Read Later view's query —
+	// this is the whole point of the reset (archived=1 would otherwise
+	// exclude it, per Read Later's ListOptions).
+	items, total, err := s.ListPage(ctx, ListOptions{ReadLater: "1", State: "unread", PerPage: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || items[0].ID != id {
+		t.Fatalf("promoted item should appear in the unread Read Later view, got %v (total=%d)", items, total)
+	}
+}
+
 func TestSavedViews(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open(ctx, t.TempDir()+"/scrimshaw.db")
