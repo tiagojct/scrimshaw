@@ -157,6 +157,8 @@ A token-authenticated JSON API drives the extension, an Obsidian workflow, and a
 - `read` — `GET /api/items`, `/api/feeds`, `/api/highlights`, `/api/search`, and `/api/shared` (the public linklog / reading log split by `?bookmarked=1` or `?read_later=1`).
 - `write` — `POST /api/save`, `/api/items/{id}/read` (marks read, stamps `read_at`), and `/api/items/{id}/highlights`.
 
+Your shared linklog/reading log is also available as an Atom feed at `GET /feed.xml?token=<a read-scoped token>`, so it can be subscribed to in any feed reader instead of polled as JSON. Feed readers can't send an `Authorization` header, so the token travels in the URL — treat that URL as a secret, the same as the token itself. The full URL is shown once when you create a read-scoped token.
+
 Items carry ISO-8601 dates (`added_at`, `published_at`, `read_at`) and a `kind` of `article` or `link`. Full details and examples are in [API.md](API.md).
 
 ## Technology

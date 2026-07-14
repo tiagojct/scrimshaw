@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -129,6 +130,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("OPTIONS /api/save", s.apiOptions)
 	mux.HandleFunc("GET /api/items", s.apiItems)
 	mux.HandleFunc("GET /api/shared", s.apiShared)
+	mux.HandleFunc("GET /feed.xml", s.feedXML)
 	mux.HandleFunc("GET /api/feeds", s.apiFeeds)
 	mux.HandleFunc("GET /api/search", s.apiSearch)
 	mux.HandleFunc("GET /api/highlights", s.apiHighlights)
@@ -1464,7 +1466,13 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request, _ string) {
 		s.internalError(w, err)
 		return
 	}
-	s.render(w, "API token", dashboardToolbar+`<div class="form-page"><h1>Token created</h1><p>Copy this token now. It will not be shown again. Scopes: `+template.HTMLEscapeString(strings.Join(scopes, ", "))+`</p><p><code class="token">`+template.HTMLEscapeString(token)+`</code></p></div>`, "")
+	body := dashboardToolbar + `<div class="form-page"><h1>Token created</h1><p>Copy this token now. It will not be shown again. Scopes: ` + template.HTMLEscapeString(strings.Join(scopes, ", ")) + `</p><p><code class="token">` + template.HTMLEscapeString(token) + `</code></p>`
+	if hasScope(strings.Join(scopes, " "), "read") {
+		feedURL := s.baseURL(r) + "/feed.xml?token=" + url.QueryEscape(token)
+		body += `<p>This token can also subscribe to your shared linklog in any feed reader:</p><p><code class="token">` + template.HTMLEscapeString(feedURL) + `</code></p>`
+	}
+	body += `</div>`
+	s.render(w, "API token", body, "")
 }
 
 func (s *Server) apiSave(w http.ResponseWriter, r *http.Request) {
@@ -1510,12 +1518,18 @@ func (s *Server) apiOptions(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) tokenScopes(r *http.Request) string {
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return s.scopesForToken(r.Context(), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+}
+
+// scopesForToken looks up a raw (unhashed) token's scopes directly, for
+// callers that can't use an Authorization header — currently just feedXML,
+// since feed readers have no way to send one.
+func (s *Server) scopesForToken(ctx context.Context, token string) string {
 	if token == "" {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(token))
-	scopes, err := s.store.TokenScopes(r.Context(), base64.RawURLEncoding.EncodeToString(sum[:]))
+	scopes, err := s.store.TokenScopes(ctx, base64.RawURLEncoding.EncodeToString(sum[:]))
 	if err != nil {
 		return ""
 	}
@@ -1642,6 +1656,93 @@ func (s *Server) apiShared(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.apiItemsList(w, r, items, false)
+}
+
+// Atom 1.0 types, marshaled via encoding/xml rather than hand-built strings
+// like the rest of this file — XML escaping (especially inside
+// type="html" content, where the escaped text IS the payload a feed reader
+// unescapes back into markup) is easy to get subtly wrong by hand.
+type atomFeed struct {
+	XMLName xml.Name    `xml:"http://www.w3.org/2005/Atom feed"`
+	Title   string      `xml:"title"`
+	ID      string      `xml:"id"`
+	Updated string      `xml:"updated"`
+	Links   []atomLink  `xml:"link"`
+	Entries []atomEntry `xml:"entry"`
+}
+
+type atomLink struct {
+	Href string `xml:"href,attr"`
+	Rel  string `xml:"rel,attr,omitempty"`
+}
+
+type atomEntry struct {
+	Title     string      `xml:"title"`
+	ID        string      `xml:"id"`
+	Link      atomLink    `xml:"link"`
+	Published string      `xml:"published"`
+	Updated   string      `xml:"updated"`
+	Author    *atomAuthor `xml:"author,omitempty"`
+	Content   atomContent `xml:"content"`
+}
+
+type atomAuthor struct {
+	Name string `xml:"name"`
+}
+
+type atomContent struct {
+	Type string `xml:"type,attr"`
+	Body string `xml:",chardata"`
+}
+
+// feedXML serves the shared linklog/reading log as Atom, for subscribing in
+// any feed reader rather than polling /api/shared as JSON. RSS readers can't
+// send an Authorization header, so — unlike every other /api/* route — the
+// read-scoped token travels in the URL (?token=...); a missing or
+// insufficiently scoped token 404s rather than 401s, since this is meant to
+// be an unguessable URL a feed reader polls unattended, not an interactive
+// auth prompt.
+func (s *Server) feedXML(w http.ResponseWriter, r *http.Request) {
+	if !hasScope(s.scopesForToken(r.Context(), r.URL.Query().Get("token")), "read") {
+		http.NotFound(w, r)
+		return
+	}
+	items, _, err := s.store.ListPage(r.Context(), store.ListOptions{
+		Shared: "1", ReadLater: r.URL.Query().Get("read_later"), Bookmarked: r.URL.Query().Get("bookmarked"), PerPage: 100,
+	})
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	base := s.baseURL(r)
+	feed := atomFeed{
+		Title:   "Scrimshaw — Shared",
+		ID:      base + "/feed.xml",
+		Updated: time.Now().UTC().Format(time.RFC3339),
+		Links:   []atomLink{{Href: base + "/"}, {Href: base + r.URL.RequestURI(), Rel: "self"}},
+	}
+	for _, item := range items {
+		updated := item.AddedAt.UTC().Format(time.RFC3339)
+		entry := atomEntry{
+			Title:     item.Title,
+			ID:        item.URL,
+			Link:      atomLink{Href: item.URL},
+			Published: updated,
+			Updated:   updated,
+			Content:   atomContent{Type: "html", Body: sanitize.HTML(item.ExtractedText)},
+		}
+		if item.Author != "" {
+			entry.Author = &atomAuthor{Name: item.Author}
+		}
+		feed.Entries = append(feed.Entries, entry)
+	}
+	w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
+	_, _ = w.Write([]byte(xml.Header))
+	enc := xml.NewEncoder(w)
+	enc.Indent("", "  ")
+	if err := enc.Encode(feed); err != nil {
+		s.log.Warn("encode feed.xml failed", "error", err)
+	}
 }
 
 func (s *Server) apiFeeds(w http.ResponseWriter, r *http.Request) {
