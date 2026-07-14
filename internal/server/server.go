@@ -351,11 +351,13 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		// anywhere), same pattern as the reader's reading-profile picker.
 		b.WriteString(`<label class="density-picker">Density <select id="density-mode"><option value="">Standard</option><option value="density-compact">Compact</option></select></label>`)
 	}
+	b.WriteString(`</div>`)
 	// A saved view is just a label on the current URL — view/tag/sort/search
 	// already encode fully into it, so there's no separate filter to build.
-	fmt.Fprintf(&b, `<form class="inline-action pin-view" method="post" action="/saved-views"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="path" value="%s"><input name="label" placeholder="Name this view" required><button>Pin</button></form>`,
+	// Kept out of .filters: pinning is a bookmarking action on the result,
+	// not another filter control.
+	fmt.Fprintf(&b, `<div class="pin-view-bar"><form class="inline-action pin-view" method="post" action="/saved-views"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="path" value="%s"><input name="label" placeholder="Name this view" required><button>Pin this view</button></form></div>`,
 		template.HTMLEscapeString(csrf(r)), template.HTMLEscapeString(r.URL.RequestURI()))
-	b.WriteString(`</div>`)
 	if tag != "" {
 		clear := "/?view=" + url.QueryEscape(v.key)
 		if sort != "" {
@@ -431,7 +433,7 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 	s.render(w, v.label, b.String(), "")
 }
 
-const dashboardToolbar = `<nav class="toolbar" aria-label="Sections"><a href="/feeds">Feeds</a><a href="/highlights">Highlights</a><a href="/settings">Settings</a></nav>`
+const dashboardToolbar = `<nav class="toolbar" aria-label="Sections"><a href="/feeds">Feeds</a><a href="/feeds/new">Add a feed</a><a href="/search">Search</a><a href="/highlights">Highlights</a><a href="/settings">Settings</a></nav>`
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) {
 	st, err := s.store.Stats(r.Context())
@@ -757,11 +759,13 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	tagLabel := "Tags"
+	tagsOpen := ""
 	if len(tags) > 0 {
 		tagLabel = "Tags: " + template.HTMLEscapeString(strings.Join(tags, ", "))
+		tagsOpen = " open"
 	}
-	fmt.Fprintf(&b, `<details class="tags-edit"><summary>%s</summary><form method="post" action="/items/%d/tags"><input type="hidden" name="csrf_token" value="%s"><label>Comma-separated tags <input name="tags" value="%s"></label><button>Save tags</button></form></details>`,
-		tagLabel, item.ID, token, template.HTMLEscapeString(strings.Join(tags, ", ")))
+	fmt.Fprintf(&b, `<details class="tags-edit"%s><summary>%s</summary><form method="post" action="/items/%d/tags"><input type="hidden" name="csrf_token" value="%s"><label>Comma-separated tags <input name="tags" value="%s"></label><button>Save tags</button></form></details>`,
+		tagsOpen, tagLabel, item.ID, token, template.HTMLEscapeString(strings.Join(tags, ", ")))
 
 	// Selection popover and the hidden form it submits to create a highlight.
 	fmt.Fprintf(&b, `<div class="hl-pop" id="hl-pop"><button type="button">Highlight</button></div><form id="hl-form" method="post" action="/items/%d/highlights"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" id="hl-quote" name="quote"><input type="hidden" name="note" value=""></form>`, item.ID, token)
@@ -1552,7 +1556,7 @@ func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
 			}
 			options += fmt.Sprintf(`<option value="%d"%s>%s</option>`, o.Seconds, sel, o.Label)
 		}
-		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button class="primary">Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button>Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
 			template.HTMLEscapeString(f.URL), feedIcon(title, f.FaviconURL), template.HTMLEscapeString(title), meta,
 			f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), template.HTMLEscapeString(f.Rules), f.ID, token)
 	}
@@ -2412,7 +2416,7 @@ const shortcutsHelpDialog = `<dialog id="shortcuts-help" class="shortcuts-help">
 <dt><kbd>?</kbd></dt><dd>Show this help</dd>
 </dl><button type="button" class="shortcuts-help-close">Close</button></dialog>`
 
-var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="topbar"><div class="bar-inner"><a class="brand" href="/">Scrimshaw</a><a class="brand-add" href="/save">Add a link</a></div></header><main class="container">{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}</main>` + shortcutsHelpDialog + `<script src="/app.js" defer></script></body></html>`))
+var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><a class="skip-link" href="#main">Skip to content</a><header class="topbar"><div class="bar-inner"><a class="brand" href="/">Scrimshaw</a><a class="brand-add" href="/save">Add a link</a></div></header><main class="container" id="main">{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}</main>` + shortcutsHelpDialog + `<script src="/app.js" defer></script></body></html>`))
 
 // starButtonAttr marks a toggle button as active. Active toggles use a quiet
 // tinted treatment so the one solid-accent primary action stays the rare mark.

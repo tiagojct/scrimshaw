@@ -119,6 +119,18 @@ a:visited { color: var(--gl-visited); }
 :focus-visible { outline: 2px solid transparent; box-shadow: var(--gl-focus-ring); border-radius: var(--gl-radius-sm); }
 @media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }
 
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  z-index: 100;
+  padding: var(--gl-space-2) var(--gl-space-4);
+  background: var(--gl-surface-raised);
+  color: var(--gl-accent);
+  border-radius: var(--gl-radius);
+}
+.skip-link:focus { left: var(--gl-space-2); top: var(--gl-space-2); }
+
 h1, h2, h3 { font-family: var(--gl-font-serif); font-weight: 600; letter-spacing: -0.018em; line-height: 1.1; text-wrap: balance; }
 h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-6); }
 
@@ -200,9 +212,13 @@ h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-
 .views a.active { color: var(--gl-accent); background: var(--gl-accent-tint); font-weight: 600; }
 
 /* Filter forms */
-.filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--gl-space-3); margin-bottom: var(--gl-space-6); }
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: var(--gl-space-3); margin-bottom: var(--gl-space-3); }
 .filters label { margin: 0; }
 .filters form { display: flex; align-items: end; gap: var(--gl-space-2); }
+
+/* Pinning a view is a bookmarking action on the filtered result, not
+   another filter, so it gets its own quieter row below .filters. */
+.pin-view-bar { margin-bottom: var(--gl-space-6); }
 
 /* Badges: quiet tinted chips, no borders. */
 .badge {
