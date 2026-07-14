@@ -904,17 +904,36 @@ func (s *Store) ListHighlights(ctx context.Context) ([]Highlight, error) {
 	return s.scanHighlights(ctx, `SELECT id, item_id, quote, note, position, created_at FROM highlights ORDER BY created_at DESC`)
 }
 
-// HighlightDetail pairs a highlight with the title of the item it belongs to.
+// HighlightDetail pairs a highlight with the title and URL of the item it
+// belongs to.
 type HighlightDetail struct {
 	Highlight
 	ItemTitle string
+	ItemURL   string
 }
 
 // ListHighlightsDetailed returns all highlights with their source item title,
 // newest first, for the annotations view.
 func (s *Store) ListHighlightsDetailed(ctx context.Context) ([]HighlightDetail, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT h.id, h.item_id, h.quote, h.note, h.position, h.created_at, i.title
-		FROM highlights h JOIN items i ON i.id = h.item_id ORDER BY h.created_at DESC`)
+	return s.highlightsDetailed(ctx, "")
+}
+
+// HighlightsSince returns highlights created at or after `since`, newest
+// first, with their source item's title and URL — for the weekly digest.
+func (s *Store) HighlightsSince(ctx context.Context, since time.Time) ([]HighlightDetail, error) {
+	return s.highlightsDetailed(ctx, since.UTC().Format(time.RFC3339))
+}
+
+func (s *Store) highlightsDetailed(ctx context.Context, since string) ([]HighlightDetail, error) {
+	query := `SELECT h.id, h.item_id, h.quote, h.note, h.position, h.created_at, i.title, i.url
+		FROM highlights h JOIN items i ON i.id = h.item_id`
+	args := []any{}
+	if since != "" {
+		query += ` WHERE h.created_at >= ?`
+		args = append(args, since)
+	}
+	query += ` ORDER BY h.created_at DESC`
+	rows, err := s.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -923,7 +942,7 @@ func (s *Store) ListHighlightsDetailed(ctx context.Context) ([]HighlightDetail, 
 	for rows.Next() {
 		var d HighlightDetail
 		var created string
-		if err := rows.Scan(&d.ID, &d.ItemID, &d.Quote, &d.Note, &d.Position, &created, &d.ItemTitle); err != nil {
+		if err := rows.Scan(&d.ID, &d.ItemID, &d.Quote, &d.Note, &d.Position, &created, &d.ItemTitle, &d.ItemURL); err != nil {
 			return nil, err
 		}
 		d.CreatedAt, _ = time.Parse(time.RFC3339, created)

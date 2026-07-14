@@ -148,6 +148,8 @@ The SQLite database and the snapshots directory must sit on **persistent local d
 
 Scrimshaw takes its own daily backup automatically: a `VACUUM INTO` snapshot into `data/backups/`, keeping the 7 most recent, with no cron job needed. That covers the database against corruption, but not the snapshots directory and not an off-box copy — for those, back up the whole data directory with SQLite's **online backup**/`VACUUM INTO` (never by copying the live file) on your own schedule. To restore: stop Scrimshaw, restore the database and snapshots together into the data directory, then start it again. Migrations run automatically on startup and are versioned and append-only.
 
+Every 7 days, a Markdown digest of the past week's highlights and your starred collection is written to `data/exports/digests/` — nothing is emailed, it's a file you can read whenever.
+
 ## Security
 
 - First run creates the admin account; there is no default password. Passwords are bcrypt-hashed with a 12-character minimum, and can be changed later from Settings (this signs out every session, including the current one). Login is rate-limited with per-IP lockout.
