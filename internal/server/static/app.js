@@ -51,6 +51,22 @@ if ("serviceWorker" in navigator) {
   });
 })();
 
+// Triage page shortcuts: k keep, x skip, b bookmark. Scoped to its own
+// listener (not folded into keyboardNav above) since it only applies on
+// /triage and shares no state with list/reader navigation.
+(function triageShortcuts() {
+  const keep = document.getElementById("triage-keep");
+  if (!keep) return;
+  const skip = document.getElementById("triage-skip");
+  const bookmark = document.getElementById("triage-bookmark");
+  addEventListener("keydown", e => {
+    if (e.target.matches("input, textarea, select")) return;
+    if (e.key === "k") keep.click();
+    else if (e.key === "x") skip?.click();
+    else if (e.key === "b") bookmark?.click();
+  });
+})();
+
 // Keyboard shortcut help dialog, opened with "?" above.
 (function shortcutsHelp() {
   const dialog = document.getElementById("shortcuts-help");

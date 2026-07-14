@@ -34,6 +34,8 @@ The interface is a set of views over that one table:
 
 **Reading files things away.** Marking an item read also archives it and stamps the time, so it leaves the active list and moves to Archived. Starred and Bookmarks are permanent collections — an item stays in them even after it's read.
 
+**Triage.** `/triage` is a fast, one-item-at-a-time way to burn down the Read Later queue instead of scrolling the list: Keep moves on without changing anything, Skip marks it read, Bookmark keeps the link but takes it out of the queue. Keyboard: `k` keep, `x` skip, `b` bookmark.
+
 ## Features
 
 Reading

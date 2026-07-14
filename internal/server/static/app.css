@@ -253,6 +253,24 @@ h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-
 .dash-section h2 a { color: var(--gl-text); text-decoration: none; }
 .dash-section h2 a:hover { color: var(--gl-accent); }
 
+/* Triage: one item at a time, deliberately narrower than the list view so
+   it reads as a distinct, focused mode rather than another list row. */
+.triage-progress { color: var(--gl-text-muted); font-size: 0.9rem; }
+.triage-card {
+  max-width: 36rem;
+  margin: var(--gl-space-4) 0 var(--gl-space-6);
+  padding: var(--gl-space-6);
+  border: 1px solid var(--gl-border);
+  border-radius: var(--gl-radius);
+  background: var(--gl-surface-raised);
+}
+.triage-card h2 { margin-top: 0; font-size: 1.3rem; }
+.triage-excerpt { color: var(--gl-text-muted); margin-bottom: 0; }
+.triage-actions { display: flex; gap: var(--gl-space-2); max-width: 36rem; }
+.triage-actions form, .triage-actions a.button { flex: 1; margin: 0; }
+.triage-actions button { width: 100%; }
+.triage-hint { color: var(--gl-text-muted); }
+
 /* Form controls */
 label { display: block; margin: var(--gl-space-3) 0; font-size: 0.95rem; }
 input, button, select, textarea { font: inherit; }

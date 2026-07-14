@@ -106,6 +106,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /items/{id}/share", s.withSession(s.shareItem))
 	mux.HandleFunc("POST /items/{id}/readlater", s.withSession(s.readLaterItem))
 	mux.HandleFunc("POST /items/{id}/bookmark", s.withSession(s.bookmarkItem))
+	mux.HandleFunc("GET /triage", s.withSession(s.triage))
+	mux.HandleFunc("POST /triage/{id}/bookmark", s.withSession(s.triageBookmark))
 	mux.HandleFunc("POST /items/{id}/highlights", s.withSession(s.highlight))
 	mux.HandleFunc("POST /items/{id}/tags", s.withSession(s.setTags))
 	mux.HandleFunc("POST /items/{id}/delete", s.withSession(s.deleteItem))
@@ -476,6 +478,9 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		fmt.Fprintf(&b, `</ul><p class="note"><a href="%s">%s</a></p></section>`, href, moreLabel)
 	}
 	section("To read", "/?view=later", "All read-later", later)
+	if st.ReadLaterUnread > 0 {
+		b.WriteString(`<p class="note"><a href="/triage">Triage the Read Later queue</a> — burn it down one item at a time.</p>`)
+	}
 	section("Recent bookmarks", "/?view=bookmarks", "All bookmarks", bookmarks)
 	section("Unread in feeds", "/?view=feeds&sort=unread", "All feeds", feedItems)
 
@@ -764,6 +769,81 @@ func (s *Server) bookmarkItem(w http.ResponseWriter, r *http.Request, _ string) 
 		return
 	}
 	http.Redirect(w, r, "/items/"+strconv.FormatInt(id, 10), http.StatusSeeOther)
+}
+
+// triage is a fast, one-item-at-a-time way to burn down the Read Later queue,
+// distinct from the list view. It walks the unread read-later items oldest
+// first via plain pagination (Page N, PerPage 1) rather than any new
+// schema: Keep just moves to page N+1 (a GET link, since it changes
+// nothing); Skip and Bookmark each remove the current item from the
+// unread+read-later set, so redirecting back to the same page N reveals
+// whatever now occupies that position.
+func (s *Server) triage(w http.ResponseWriter, r *http.Request, _ string) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	items, total, err := s.store.ListPage(r.Context(), store.ListOptions{
+		ReadLater: "1", State: "unread", Sort: "oldest", Page: page, PerPage: 1,
+	})
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	var b strings.Builder
+	b.WriteString(dashboardToolbar)
+	b.WriteString(`<h1>Triage</h1>`)
+	if len(items) == 0 {
+		if page > 1 {
+			b.WriteString(`<p class="note">Queue clear. Nothing left to triage.</p>`)
+		} else {
+			b.WriteString(`<p class="note">Nothing in Read Later to triage.</p>`)
+		}
+		b.WriteString(`<p><a href="/?view=later">Back to Read Later</a></p>`)
+		s.render(w, "Triage", b.String(), "")
+		return
+	}
+	item := items[0]
+	token := template.HTMLEscapeString(csrf(r))
+	returnURL := "/triage?page=" + strconv.Itoa(page)
+	fmt.Fprintf(&b, `<p class="triage-progress">%d left in Read Later</p>`, total)
+	meta := ""
+	if item.Author != "" {
+		meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
+	}
+	meta += timeTag(item.AddedAt)
+	fmt.Fprintf(&b, `<article class="triage-card"><h2><a href="/items/%d">%s</a></h2><div class="item-meta">%s</div><p class="triage-excerpt">%s</p></article>`,
+		item.ID, template.HTMLEscapeString(item.Title), meta, excerpt(item.ExtractedText, "", 80))
+	fmt.Fprintf(&b, `<div class="triage-actions">`)
+	fmt.Fprintf(&b, `<a class="button" id="triage-keep" href="/triage?page=%d">Keep</a>`, page+1)
+	fmt.Fprintf(&b, `<form method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="read"><input type="hidden" name="return" value="%s"><button id="triage-skip">Skip</button></form>`,
+		item.ID, token, template.HTMLEscapeString(returnURL))
+	fmt.Fprintf(&b, `<form method="post" action="/triage/%d/bookmark"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="return" value="%s"><button class="primary" id="triage-bookmark">Bookmark</button></form>`,
+		item.ID, token, template.HTMLEscapeString(returnURL))
+	b.WriteString(`</div>`)
+	b.WriteString(`<p class="note triage-hint"><kbd>k</kbd> keep &middot; <kbd>x</kbd> skip &middot; <kbd>b</kbd> bookmark</p>`)
+	s.render(w, "Triage", b.String(), "")
+}
+
+// triageBookmark bookmarks an item and clears read_later, unlike the
+// reader's plain Bookmark toggle which leaves read_later untouched — triage
+// is specifically about clearing the queue, so "keep the link, I'm done
+// triaging it" has to actually shrink the queue, not just add a flag.
+func (s *Server) triageBookmark(w http.ResponseWriter, r *http.Request, _ string) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.store.SetBookmarked(r.Context(), id, true); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if err := s.store.SetReadLater(r.Context(), id, false); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	http.Redirect(w, r, safeReturn(r.FormValue("return")), http.StatusSeeOther)
 }
 func (s *Server) highlight(w http.ResponseWriter, r *http.Request, _ string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
