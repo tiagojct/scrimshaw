@@ -677,18 +677,21 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 		content = fmt.Sprintf(`<div class="reader"><p class="note">This is a stored link. Use Read later or Fetch full text below to get the article for reading.</p><p><a href="%s" rel="noopener noreferrer">%s</a></p></div>`,
 			template.HTMLEscapeString(item.URL), template.HTMLEscapeString(item.URL))
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s%s</p><p class="meta dates">%s</p>%s</article>`,
-		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, badges.String(), dates.String(), content)
-
-	// Return to the list the item belongs to after it is filed away.
-	backURL := "/?view=feeds"
+	// Return to the list the item belongs to. Feed items are auto-read on
+	// open, so this back link (no state change) is the normal one-click way
+	// out; the Mark read / Mark unread buttons below only change state.
+	backURL, backLabel := "/?view=feeds", "Feeds"
 	switch {
 	case item.ReadLater:
-		backURL = "/?view=later"
+		backURL, backLabel = "/?view=later", "Read Later"
 	case item.Bookmarked:
-		backURL = "/?view=bookmarks"
+		backURL, backLabel = "/?view=bookmarks", "Bookmarks"
 	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, `<p class="back-link"><a href="%s">&larr; %s</a></p>`, backURL, backLabel)
+	fmt.Fprintf(&b, `<article data-item-id="%d"><h1>%s</h1><p class="meta"><a class="original-link" href="%s" rel="noopener noreferrer">Open original</a>%s%s</p><p class="meta dates">%s</p>%s</article>`,
+		item.ID, template.HTMLEscapeString(item.Title), template.HTMLEscapeString(item.URL), snapshotLink, badges.String(), dates.String(), content)
 	starValue, starLabel := "1", "Star"
 	if item.Starred {
 		starValue, starLabel = "0", "Starred"
@@ -706,9 +709,12 @@ func (s *Server) reader(w http.ResponseWriter, r *http.Request, _ string) {
 		bookmarkValue, bookmarkLabel = "0", "Bookmarked"
 	}
 	b.WriteString(`<div class="reader-actions">`)
-	// Reading files an item into Archived; "Move to inbox" reverses it.
-	if item.Archived {
-		fmt.Fprintf(&b, `<form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="unread"><button class="primary">Move to inbox</button></form>`, item.ID, token)
+	// Mark read files the item away and returns to its list; Mark unread
+	// reverses it. Feed items arrive here already read (auto-read on open),
+	// so their read-state control is the quiet "Mark unread", not a loud
+	// primary button — the back link above is the normal way out.
+	if item.ReadState == "read" {
+		fmt.Fprintf(&b, `<form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="unread"><button>Mark unread</button></form>`, item.ID, token)
 	} else {
 		fmt.Fprintf(&b, `<form class="read-form" method="post" action="/items/%d/read"><input type="hidden" name="csrf_token" value="%s"><input type="hidden" name="state" value="read"><input type="hidden" name="return" value="%s"><button class="primary">Mark read</button></form>`, item.ID, token, template.HTMLEscapeString(backURL))
 	}
@@ -2391,13 +2397,13 @@ const shortcutsHelpDialog = `<dialog id="shortcuts-help" class="shortcuts-help">
 <dt><kbd>/</kbd></dt><dd>Focus search</dd>
 <dt><kbd>g</kbd> <kbd>a</kbd></dt><dd>Go home</dd>
 <dt><kbd>g</kbd> <kbd>f</kbd></dt><dd>Add a feed</dd>
-<dt><kbd>m</kbd></dt><dd>Mark read (in the reader)</dd>
+<dt><kbd>m</kbd></dt><dd>Mark read or unread (in the reader)</dd>
 <dt><kbd>s</kbd></dt><dd>Star (in the reader)</dd>
 <dt><kbd>v</kbd></dt><dd>Open the original page (in the reader)</dd>
 <dt><kbd>?</kbd></dt><dd>Show this help</dd>
 </dl><button type="button" class="shortcuts-help-close">Close</button></dialog>`
 
-var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><a class="skip-link" href="#main">Skip to content</a><header class="topbar"><div class="bar-inner"><a class="brand" href="/">Scrimshaw</a><a class="brand-add" href="/save">Add a link</a></div></header><main class="container" id="main">{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}</main>` + shortcutsHelpDialog + `<script src="/app.js" defer></script></body></html>`))
+var pageTemplate = template.Must(template.New("page").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"><title>{{.Title}} | Scrimshaw</title></head><body><header class="topbar"><div class="bar-inner"><a class="brand" href="/">Scrimshaw</a><a class="brand-add" href="/save">Add a link</a></div></header><main class="container">{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}{{.Body}}</main>` + shortcutsHelpDialog + `<script src="/app.js" defer></script></body></html>`))
 
 // starButtonAttr marks a toggle button as active. Active toggles use a quiet
 // tinted treatment so the one solid-accent primary action stays the rare mark.

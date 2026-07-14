@@ -119,20 +119,8 @@ a:visited { color: var(--gl-visited); }
 :focus-visible { outline: 2px solid transparent; box-shadow: var(--gl-focus-ring); border-radius: var(--gl-radius-sm); }
 @media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }
 
-.skip-link {
-  position: absolute;
-  left: -999px;
-  top: 0;
-  z-index: 100;
-  padding: var(--gl-space-2) var(--gl-space-4);
-  background: var(--gl-surface-raised);
-  color: var(--gl-accent);
-  border-radius: var(--gl-radius);
-}
-.skip-link:focus { left: var(--gl-space-2); top: var(--gl-space-2); }
-
 h1, h2, h3 { font-family: var(--gl-font-serif); font-weight: 600; letter-spacing: -0.018em; line-height: 1.1; text-wrap: balance; }
-h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-6); }
+h1 { font-size: clamp(1.7rem, 1.4rem + 1.2vw, 2.3rem); margin: 0 0 var(--gl-space-4); }
 
 /* App shell */
 .topbar {
@@ -175,11 +163,11 @@ h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-
 .container {
   max-width: var(--gl-container);
   margin: 0 auto;
-  padding: var(--gl-space-8) var(--gl-space-4) var(--gl-space-12);
+  padding: var(--gl-space-6) var(--gl-space-4) var(--gl-space-8);
 }
 
 /* Toolbar (secondary actions) */
-.toolbar { display: flex; flex-wrap: wrap; gap: var(--gl-space-2); margin: 0 0 var(--gl-space-6); padding: 0; list-style: none; }
+.toolbar { display: flex; flex-wrap: wrap; gap: var(--gl-space-2); margin: 0 0 var(--gl-space-4); padding: 0; list-style: none; }
 .toolbar a {
   padding: var(--gl-space-1) var(--gl-space-3);
   border: 1px solid var(--gl-border);
@@ -196,7 +184,7 @@ h1 { font-size: clamp(2.1rem, 1.6rem + 1.9vw, 3rem); margin: 0 0 var(--gl-space-
   display: flex;
   flex-wrap: wrap;
   gap: var(--gl-space-1);
-  margin-bottom: var(--gl-space-6);
+  margin-bottom: var(--gl-space-4);
   border-bottom: 1px solid var(--gl-border);
   padding-bottom: var(--gl-space-2);
 }
@@ -340,7 +328,7 @@ ul { list-style: none; margin: 0; padding: 0; }
   display: flex;
   align-items: baseline;
   gap: var(--gl-space-3);
-  padding: var(--gl-space-4) var(--gl-space-3);
+  padding: var(--gl-space-3);
   margin: 0 calc(-1 * var(--gl-space-3));
   border-radius: var(--gl-radius);
   border-bottom: 1px solid var(--gl-border-soft);
@@ -351,7 +339,7 @@ ul { list-style: none; margin: 0; padding: 0; }
    value — not a new color, just applied to the row instead of just bold. */
 .items.queue li.unread { background: var(--gl-accent-tint); }
 .items.queue li.unread:hover { background: color-mix(in srgb, var(--gl-accent-tint), var(--gl-surface) 50%); }
-.item-main { display: flex; flex-direction: column; gap: var(--gl-space-2); min-width: 0; flex: 1; }
+.item-main { display: flex; flex-direction: column; gap: var(--gl-space-1); min-width: 0; flex: 1; }
 .item-main > a { font-weight: 400; text-decoration: none; color: var(--gl-text); font-size: 1.08rem; }
 .item-main > a:hover { color: var(--gl-accent); }
 .item-meta {
@@ -407,6 +395,11 @@ form[action="/logout"] { margin-top: var(--gl-space-8); }
 
 /* Reader view */
 article { max-width: 44rem; }
+/* One-click return to the origin list, no state change (feed items are
+   auto-read on open, so this is the normal way out of the reader). */
+.back-link { margin: 0 0 var(--gl-space-4); font-size: 0.9rem; }
+.back-link a { text-decoration: none; color: var(--gl-text-muted); }
+.back-link a:hover { color: var(--gl-accent); }
 .reader-actions {
   display: flex;
   flex-wrap: wrap;
