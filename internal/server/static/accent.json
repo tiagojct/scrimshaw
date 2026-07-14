@@ -1,0 +1,16 @@
+{
+  "light": {
+    "accent": "#0b62cf",
+    "accentBright": "#007aff",
+    "accentDeep": "#084b96",
+    "accentTint": "#0b62cf14",
+    "onAccent": "#f2f7fb"
+  },
+  "dark": {
+    "accent": "#3d97ff",
+    "accentBright": "#6cb2ff",
+    "accentDeep": "#007aff",
+    "accentTint": "#3d97ff1f",
+    "onAccent": "#0b1218"
+  }
+}

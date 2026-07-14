@@ -20,7 +20,7 @@ Scrimshaw is a single-user, self-hosted Go application that unifies an RSS reade
 - mmcdole/gofeed for feed parsing.
 - go-shiori/go-readability for extraction.
 - microcosm-cc/bluemonday for HTML sanitization.
-- Plain CSS for theming, following the Glauca design system (~/github/glauca; Pruina light default, Profundum dark via prefers-color-scheme). CSS and JS live in internal/server/static/ (app.css, app.js), embedded and served same-origin so the CSP needs no inline exceptions. Design intent: pale ground, the accent (dies blue) is rare and load-bearing — at most one solid-accent primary action per view; active tabs/toggles use a quiet accent tint, badges are borderless tinted chips. Keep it minimal.
+- Plain CSS for theming, following the Glauca design system (~/github/glauca; Pruina light default, Profundum dark via prefers-color-scheme). CSS and JS live in internal/server/static/ (app.css, app.js), embedded and served same-origin so the CSP needs no inline exceptions. Design intent: pale ground, the accent (dies blue) is rare and load-bearing — at most one solid-accent primary action per view; active tabs/toggles use a quiet accent tint, badges are borderless tinted chips. Keep it minimal. The accent color's source of truth is internal/server/static/accent.json; `go generate ./internal/server/static/...` (gentokens) rewrites the marked `--gl-accent*` block in app.css from it — a Go tooling step, not a frontend build step, so app.css stays a plain static embedded file with no runtime theming. Tag colors (`--gl-tag-1..6`, tagChipClass in server.go) are the opposite pattern: no source file, a pure per-name hash at render time.
 
 ## Repository
 
