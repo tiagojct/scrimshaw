@@ -20,6 +20,7 @@ import (
 	"github.com/tiagojct/scrimshaw/internal/feeds"
 	"github.com/tiagojct/scrimshaw/internal/fetch"
 	"github.com/tiagojct/scrimshaw/internal/links"
+	"github.com/tiagojct/scrimshaw/internal/newsletter"
 	"github.com/tiagojct/scrimshaw/internal/reader"
 	"github.com/tiagojct/scrimshaw/internal/server"
 	"github.com/tiagojct/scrimshaw/internal/store"
@@ -73,6 +74,26 @@ func main() {
 	go backupSvc.Run(ctx, 24*time.Hour)
 	digestSvc := &digest.Service{Store: db, Directory: filepath.Join(dataDir, "exports", "digests"), Logger: logger}
 	go digestSvc.Run(ctx, 7*24*time.Hour)
+	// Newsletter ingestion is opt-in: only starts if a mailbox is configured.
+	// Unlike the other background jobs, polling frequency has real
+	// per-provider considerations (rate limits), hence its own interval var.
+	if imapHost := env("SCRIMSHAW_IMAP_HOST", ""); imapHost != "" {
+		imapUser, imapPassword := env("SCRIMSHAW_IMAP_USER", ""), env("SCRIMSHAW_IMAP_PASSWORD", "")
+		if imapUser == "" || imapPassword == "" {
+			logger.Error("SCRIMSHAW_IMAP_HOST is set but SCRIMSHAW_IMAP_USER or SCRIMSHAW_IMAP_PASSWORD is missing")
+			os.Exit(1)
+		}
+		imapInterval, err := time.ParseDuration(env("SCRIMSHAW_IMAP_INTERVAL", "15m"))
+		if err != nil {
+			logger.Error("invalid SCRIMSHAW_IMAP_INTERVAL", "error", err)
+			os.Exit(1)
+		}
+		newsletterSvc := &newsletter.Service{
+			Host: imapHost, User: imapUser, Password: imapPassword, Folder: env("SCRIMSHAW_IMAP_FOLDER", "INBOX"),
+			Store: db, Logger: logger,
+		}
+		go newsletterSvc.Run(ctx, imapInterval)
+	}
 	app := server.New(db, logger, server.Config{SessionSecret: secret, CookieSecure: !strings.HasPrefix(env("SCRIMSHAW_BASE_URL", ""), "http://"), BaseURL: env("SCRIMSHAW_BASE_URL", ""), Saver: saver, Feeds: feedService, SnapshotsDir: filepath.Join(dataDir, "snapshots"), ImageCacheDir: filepath.Join(dataDir, "images"), Fetcher: fetch.New(timeout), ExportDir: filepath.Join(dataDir, "exports")})
 	httpServer := &http.Server{Addr: env("SCRIMSHAW_ADDR", ":8080"), Handler: app.Routes(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

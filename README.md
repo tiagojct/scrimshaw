@@ -52,6 +52,7 @@ Reading
 Saving
 - Add a link and choose **Read later** (fetch the article) or **Bookmark** (store the link); the title is fetched automatically
 - Save from a bookmarklet, a browser extension, the iOS Share Sheet, the PWA, or the API (see below)
+- Newsletter ingestion (optional): point Scrimshaw at an IMAP mailbox you already control and it polls for unread mail, converting each into a read-later item — a "kill-the-newsletter"-style bridge for the reading that arrives by email, not RSS. Off unless configured (see [Configuration](#configuration))
 - Offline snapshots stored as single, self-contained HTML files on disk
 - Full-text search across titles, article text, and snapshots, with the match highlighted in an excerpt
 
@@ -141,8 +142,14 @@ Configuration is by environment variable:
 | `SCRIMSHAW_BASE_URL` | (none) | Public origin. Used to build the bookmarklet and iOS snippet, and to decide the session cookie's `Secure` flag (off only for an `http://` value) |
 | `SCRIMSHAW_SESSION_SECRET` | (generated and persisted) | Base64url, at least 32 bytes. Set it to keep sessions valid across restarts on ephemeral filesystems |
 | `SCRIMSHAW_FETCH_TIMEOUT` | `30s` | Timeout for every outbound fetch (feeds, saves, images, link checks) |
+| `SCRIMSHAW_IMAP_HOST` | (none) | `host:port` of an IMAP mailbox to poll for newsletters, e.g. `imap.example.com:993`. Newsletter ingestion is off unless this is set |
+| `SCRIMSHAW_IMAP_USER` / `SCRIMSHAW_IMAP_PASSWORD` | (none) | Required once `SCRIMSHAW_IMAP_HOST` is set (the app exits at startup if either is missing). Most providers need an app-specific password, not your normal account password |
+| `SCRIMSHAW_IMAP_FOLDER` | `INBOX` | Mailbox folder to poll |
+| `SCRIMSHAW_IMAP_INTERVAL` | `15m` | How often to poll |
 
 Per-feed settings (refresh interval, fetch-full-content, auto-snapshot) are configured in the UI under **Feeds**, not by environment variable. Auto-snapshot is off by default.
+
+Point `SCRIMSHAW_IMAP_HOST` at a mailbox, alias, or filtered label you already control — not your main inbox. Every message the poller looks at gets marked `\Seen`, whether or not it imported cleanly, so nothing is retried forever; connects over implicit TLS (IMAPS) only.
 
 ## Data and backups
 
