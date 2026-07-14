@@ -31,6 +31,7 @@ type Item struct {
 	URL, CanonicalURL, Title, Author, SiteName, ExtractedText, ReadState, Source string
 	SnapshotPath                                                                 sql.NullString
 	FeedID                                                                       sql.NullInt64
+	FeedTitle, FeedFaviconURL                                                    sql.NullString
 	PublishedAt, ReadAt, LinkCheckedAt                                           sql.NullString
 	AddedAt                                                                      time.Time
 	Starred, Archived, ReadLater, Bookmarked, Shared                             bool
@@ -38,15 +39,17 @@ type Item struct {
 }
 
 // itemColumns is the shared projection for reading items; keep the scan in
-// scanItem aligned with this list.
-const itemColumns = `i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, i.published_at, i.added_at, i.read_at, i.starred, i.archived, i.read_later, i.bookmarked, i.shared, i.link_status, i.link_checked_at`
+// scanItem aligned with this list. The feed_title/feed_favicon_url columns
+// need a `LEFT JOIN feeds fd ON fd.id = i.feed_id` in every query's FROM
+// clause (fd.title/fd.favicon_url are null for manually saved items).
+const itemColumns = `i.id, i.url, i.canonical_url, i.title, i.author, i.site_name, i.extracted_text, i.read_state, i.source, i.snapshot_path, i.feed_id, fd.title, fd.favicon_url, i.published_at, i.added_at, i.read_at, i.starred, i.archived, i.read_later, i.bookmarked, i.shared, i.link_status, i.link_checked_at`
 
 func scanItem(rows interface{ Scan(...any) error }) (Item, error) {
 	var item Item
 	var added string
 	err := rows.Scan(&item.ID, &item.URL, &item.CanonicalURL, &item.Title, &item.Author, &item.SiteName,
-		&item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.PublishedAt,
-		&added, &item.ReadAt, &item.Starred, &item.Archived, &item.ReadLater, &item.Bookmarked, &item.Shared, &item.LinkStatus, &item.LinkCheckedAt)
+		&item.ExtractedText, &item.ReadState, &item.Source, &item.SnapshotPath, &item.FeedID, &item.FeedTitle, &item.FeedFaviconURL,
+		&item.PublishedAt, &added, &item.ReadAt, &item.Starred, &item.Archived, &item.ReadLater, &item.Bookmarked, &item.Shared, &item.LinkStatus, &item.LinkCheckedAt)
 	item.AddedAt, _ = time.Parse(time.RFC3339, added)
 	return item, err
 }
@@ -330,7 +333,7 @@ func (s *Store) ListItems(ctx context.Context) ([]Item, error) {
 }
 
 func (s *Store) AllItems(ctx context.Context) ([]Item, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i ORDER BY i.added_at`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i LEFT JOIN feeds fd ON fd.id = i.feed_id ORDER BY i.added_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +518,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) ([]Item, int,
 	}
 	pageArgs := append(append([]any{}, args...), options.PerPage, (options.Page-1)*options.PerPage)
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+`
-		FROM items i WHERE `+condition+` ORDER BY `+order+` LIMIT ? OFFSET ?`, pageArgs...)
+		FROM items i LEFT JOIN feeds fd ON fd.id = i.feed_id WHERE `+condition+` ORDER BY `+order+` LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -668,13 +671,13 @@ func (s *Store) BackupTo(ctx context.Context, path string) error {
 }
 
 func (s *Store) Item(ctx context.Context, id int64) (Item, error) {
-	return scanItem(s.DB.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE i.id=?`, id))
+	return scanItem(s.DB.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items i LEFT JOIN feeds fd ON fd.id = i.feed_id WHERE i.id=?`, id))
 }
 
 // BlankTitleItems returns items with no title, for the startup backfill that
 // derives one from stored content (see feeds.BackfillBlankTitles).
 func (s *Store) BlankTitleItems(ctx context.Context) ([]Item, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i WHERE TRIM(i.title)=''`)
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i LEFT JOIN feeds fd ON fd.id = i.feed_id WHERE TRIM(i.title)=''`)
 	if err != nil {
 		return nil, err
 	}
@@ -746,7 +749,7 @@ func (s *Store) SetShared(ctx context.Context, id int64, shared bool) error {
 // LinksToCheck returns manually stored links whose reachability has not been
 // verified since `before`, oldest check first, for the dead-link checker.
 func (s *Store) LinksToCheck(ctx context.Context, before time.Time, limit int) ([]Item, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM items i LEFT JOIN feeds fd ON fd.id = i.feed_id
 		WHERE i.bookmarked=1 AND (i.link_checked_at IS NULL OR i.link_checked_at < ?)
 		ORDER BY i.link_checked_at IS NOT NULL, i.link_checked_at LIMIT ?`,
 		before.UTC().Format(time.RFC3339), limit)
@@ -1034,7 +1037,7 @@ func (s *Store) Search(ctx context.Context, query string) ([]Item, error) {
 		return nil, nil
 	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+itemColumns+`
-		FROM items_fts f JOIN items i ON i.id=f.rowid WHERE items_fts MATCH ? ORDER BY rank LIMIT 100`, query)
+		FROM items_fts f JOIN items i ON i.id=f.rowid LEFT JOIN feeds fd ON fd.id = i.feed_id WHERE items_fts MATCH ? ORDER BY rank LIMIT 100`, query)
 	if err != nil {
 		return nil, err
 	}

@@ -346,6 +346,11 @@ ul { list-style: none; margin: 0; padding: 0; }
   border-bottom: 1px solid var(--gl-border-soft);
 }
 .items li:hover { background: var(--gl-surface); }
+/* Unread wash: same role as Glauca's own Miniflux theme
+   (--feed-has-unread-background-color), which is this exact accent-tint
+   value — not a new color, just applied to the row instead of just bold. */
+.items.queue li.unread { background: var(--gl-accent-tint); }
+.items.queue li.unread:hover { background: color-mix(in srgb, var(--gl-accent-tint), var(--gl-surface) 50%); }
 .item-main { display: flex; flex-direction: column; gap: var(--gl-space-2); min-width: 0; flex: 1; }
 .item-main > a { font-weight: 400; text-decoration: none; color: var(--gl-text); font-size: 1.08rem; }
 .item-main > a:hover { color: var(--gl-accent); }
@@ -363,6 +368,9 @@ ul { list-style: none; margin: 0; padding: 0; }
 .snippet mark { background: var(--gl-accent-tint); color: var(--gl-accent); padding: 0 0.1em; border-radius: 2px; }
 /* Bold-for-unread only in the reading queues (Feeds, Read Later). */
 .items.queue li.unread .item-main > a { font-weight: 600; }
+/* j/k cursor: row-level accent border, not a shadow (Glauca's Miniflux
+   theme sets --current-item-box-shadow: none for this exact affordance). */
+.items li:has(a:focus-visible) { border-left: 3px solid var(--gl-accent); padding-left: calc(var(--gl-space-3) - 3px); }
 
 /* Density: compact mode, Read Later only (see plan — item rows are already
    fairly compact two-line rows everywhere else, so the win is narrow, but

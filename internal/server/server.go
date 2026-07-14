@@ -386,31 +386,16 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request, _ string) {
 		if item.Starred {
 			classes += " starred"
 		}
-		badges := ""
-		if v.showSource {
-			badges += itemKindBadges(item)
-		}
 		// In the "Read" view every item is read, so the badge would be noise there.
-		if item.ReadState == "read" && v.key != "archived" {
-			badges += ` <span class="badge read">Read</span>`
+		meta := itemMeta(item, v.showSource, v.key != "archived")
+		// Favicons only in the Feeds view: other views mix sources, and a
+		// blank favicon column there would read as broken rather than help.
+		icon := ""
+		if v.key == "feeds" && item.Source == "feed" {
+			icon = feedIcon(item.FeedTitle.String, item.FeedFaviconURL.String)
 		}
-		if item.Starred {
-			badges += ` <span class="badge star">Starred</span>`
-		}
-		if item.Shared {
-			badges += ` <span class="badge shared">Shared</span>`
-		}
-		if linkBroken(item) {
-			badges += ` <span class="badge broken">Broken link</span>`
-		}
-		meta := ""
-		if item.Author != "" {
-			meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
-		}
-		meta += timeTag(item.AddedAt)
-		meta += badges
-		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select %s"><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
-			classes, item.ID, template.HTMLEscapeString(item.Title), item.ID, template.HTMLEscapeString(item.Title), meta)
+		fmt.Fprintf(&b, `<li class="%s"><input type="checkbox" name="item" value="%d" aria-label="Select %s"><div class="item-main"><a href="/items/%d">%s%s</a><div class="item-meta">%s</div></div></li>`,
+			classes, item.ID, template.HTMLEscapeString(item.Title), item.ID, icon, template.HTMLEscapeString(item.Title), meta)
 	}
 	b.WriteString(`</ul><div class="bulk-actions">`)
 	if v.key == "archived" {
@@ -488,7 +473,10 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		b.WriteString(`</ul></section>`)
 	}
 
-	section := func(title, href, moreLabel string, items []store.Item) {
+	// showSource mirrors the corresponding view's own showSource flag (see
+	// viewOrder below) so an item carries the same badges here as it would
+	// in its full list view.
+	section := func(title, href, moreLabel string, items []store.Item, showSource bool) {
 		fmt.Fprintf(&b, `<section class="dash-section"><h2><a href="%s">%s</a></h2>`, href, title)
 		if len(items) == 0 {
 			b.WriteString(`<p class="note">Nothing here yet.</p></section>`)
@@ -496,25 +484,18 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, _ ...string) 
 		}
 		b.WriteString(`<ul class="items">`)
 		for _, item := range items {
-			meta := ""
-			if item.Author != "" {
-				meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
-			}
-			meta += timeTag(item.AddedAt)
-			if linkBroken(item) {
-				meta += ` <span class="badge broken">Broken link</span>`
-			}
+			meta := itemMeta(item, showSource, true)
 			fmt.Fprintf(&b, `<li><div class="item-main"><a href="/items/%d">%s</a><div class="item-meta">%s</div></div></li>`,
 				item.ID, template.HTMLEscapeString(item.Title), meta)
 		}
 		fmt.Fprintf(&b, `</ul><p class="note"><a href="%s">%s</a></p></section>`, href, moreLabel)
 	}
-	section("To read", "/?view=later", "All read-later", later)
+	section("To read", "/?view=later", "All read-later", later, true)
 	if st.ReadLaterUnread > 0 {
 		b.WriteString(`<p class="note"><a href="/triage">Triage the Read Later queue</a> — burn it down one item at a time.</p>`)
 	}
-	section("Recent bookmarks", "/?view=bookmarks", "All bookmarks", bookmarks)
-	section("Unread in feeds", "/?view=feeds&sort=unread", "All feeds", feedItems)
+	section("Recent bookmarks", "/?view=bookmarks", "All bookmarks", bookmarks, true)
+	section("Unread in feeds", "/?view=feeds&sort=unread", "All feeds", feedItems, false)
 
 	b.WriteString(`<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(csrf(r)) + `"><button>Log out</button></form>`)
 	s.render(w, "Dashboard", b.String(), "")
@@ -2450,6 +2431,33 @@ func itemKindBadges(item store.Item) string {
 		out = ` <span class="badge">Saved</span>`
 	}
 	return out
+}
+
+// itemMeta renders an item's row meta line (author, age, badges) — the one
+// place both the full list view and the dashboard's condensed sections
+// build it, so the same item looks the same regardless of where it's shown.
+func itemMeta(item store.Item, showSource, showReadBadge bool) string {
+	meta := ""
+	if item.Author != "" {
+		meta += `<span class="author">` + template.HTMLEscapeString(item.Author) + `</span>`
+	}
+	meta += timeTag(item.AddedAt)
+	if showSource {
+		meta += itemKindBadges(item)
+	}
+	if showReadBadge && item.ReadState == "read" {
+		meta += ` <span class="badge read">Read</span>`
+	}
+	if item.Starred {
+		meta += ` <span class="badge star">Starred</span>`
+	}
+	if item.Shared {
+		meta += ` <span class="badge shared">Shared</span>`
+	}
+	if linkBroken(item) {
+		meta += ` <span class="badge broken">Broken link</span>`
+	}
+	return meta
 }
 
 func shortDate(v sql.NullString) string {
