@@ -132,6 +132,7 @@ func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 	if err != nil {
 		return fmt.Errorf("parse feed: %w", err)
 	}
+	rules := parseFeedRules(feed.Rules)
 	for _, entry := range parsed.Items {
 		if entry.Link == "" {
 			continue
@@ -164,21 +165,32 @@ func (s *Service) pollOne(ctx context.Context, feed store.Feed) error {
 		if strings.TrimSpace(title) == "" {
 			title = fallbackTitle(text, entry.Link)
 		}
+		if len(rules) > 0 && shouldSkip(rules, title+"\n"+text) {
+			continue
+		}
 		// One malformed entry must not fail the whole poll and disable the feed.
 		inserted, err := s.Store.InsertFeedItem(ctx, feed.ID, entry.Link, title, author, text, publishedAt)
 		if err != nil {
 			s.Logger.Warn("skipping feed item", "feed_id", feed.ID, "url", entry.Link, "error", err)
 			continue
 		}
-		if inserted && feed.AutoSnapshot && s.Snapshots != nil {
+		tags := matchingTags(rules, title+"\n"+text)
+		if inserted && (feed.AutoSnapshot && s.Snapshots != nil || len(tags) > 0) {
 			itemID, err := s.Store.ItemIDByURL(ctx, entry.Link)
 			if err != nil {
-				s.Logger.Warn("snapshot lookup failed", "feed_id", feed.ID, "url", entry.Link, "error", err)
+				s.Logger.Warn("item lookup failed", "feed_id", feed.ID, "url", entry.Link, "error", err)
 				continue
 			}
-			content := sanitize.HTML(text)
-			if err := s.Snapshots.SaveSnapshot(ctx, itemID, content, text); err != nil {
-				s.Logger.Warn("feed item snapshot failed", "feed_id", feed.ID, "item", itemID, "error", err)
+			if len(tags) > 0 {
+				if err := s.Store.SetItemTags(ctx, itemID, tags); err != nil {
+					s.Logger.Warn("auto-tag feed item failed", "feed_id", feed.ID, "item", itemID, "error", err)
+				}
+			}
+			if feed.AutoSnapshot && s.Snapshots != nil {
+				content := sanitize.HTML(text)
+				if err := s.Snapshots.SaveSnapshot(ctx, itemID, content, text); err != nil {
+					s.Logger.Warn("feed item snapshot failed", "feed_id", feed.ID, "item", itemID, "error", err)
+				}
 			}
 		}
 	}

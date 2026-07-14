@@ -1263,9 +1263,9 @@ func (s *Server) feedsList(w http.ResponseWriter, r *http.Request, _ string) {
 			}
 			options += fmt.Sprintf(`<option value="%d"%s>%s</option>`, o.Seconds, sel, o.Label)
 		}
-		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><button class="primary">Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
+		fmt.Fprintf(&b, `<li><div class="item-main"><a href="%s" rel="noopener noreferrer">%s</a><div class="item-meta">%s</div></div><div class="feed-actions"><form class="inline-action" method="post" action="/feeds/%d/refresh"><input type="hidden" name="csrf_token" value="%s"><button>Refresh</button></form><details class="feed-settings"><summary>Settings</summary><form class="stacked" method="post" action="/feeds/%d/settings"><input type="hidden" name="csrf_token" value="%s"><label>Refresh <select name="interval">%s</select></label><label><input type="checkbox" name="fetch_full_content" value="1"%s> Fetch the full article for each item</label><label><input type="checkbox" name="auto_snapshot" value="1"%s> Save an offline snapshot of each item</label><label>Content rules (one per line: <code>skip &lt;keyword or /regex/&gt;</code> or <code>tag:name &lt;keyword or /regex/&gt;</code>) <textarea name="rules" rows="3" placeholder="skip sponsored&#10;tag:golang /\bgo\b/">%s</textarea></label><button class="primary">Save settings</button></form><form method="post" action="/feeds/%d/delete"><input type="hidden" name="csrf_token" value="%s"><button class="danger-btn">Unsubscribe</button></form></details></div></li>`,
 			template.HTMLEscapeString(f.URL), template.HTMLEscapeString(title), meta,
-			f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), f.ID, token)
+			f.ID, token, f.ID, token, options, checkedAttr(f.FetchFullContent), checkedAttr(f.AutoSnapshot), template.HTMLEscapeString(f.Rules), f.ID, token)
 	}
 	b.WriteString(`</ul>`)
 	s.render(w, "Feeds", b.String(), "")
@@ -1337,6 +1337,10 @@ func (s *Server) feedSettings(w http.ResponseWriter, r *http.Request, _ string) 
 	}
 	seconds, _ := strconv.Atoi(r.FormValue("interval"))
 	if err := s.store.SetFeedRefresh(r.Context(), id, time.Duration(seconds)*time.Second, r.FormValue("fetch_full_content") == "1", r.FormValue("auto_snapshot") == "1"); err != nil {
+		s.internalError(w, err)
+		return
+	}
+	if err := s.store.SetFeedRules(r.Context(), id, r.FormValue("rules")); err != nil {
 		s.internalError(w, err)
 		return
 	}

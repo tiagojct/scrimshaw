@@ -68,6 +68,43 @@ func TestPollDueUpdatesFeedURLAfterPermanentRedirect(t *testing.T) {
 	}
 }
 
+func TestPollDueAppliesFeedContentRules(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, t.TempDir()+"/items.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	feedID, err := db.AddFeed(ctx, "https://example.test/feed", time.Hour, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFeedRules(ctx, feedID, "skip sponsored\ntag:golang go"); err != nil {
+		t.Fatal(err)
+	}
+	rss := `<?xml version="1.0"?><rss version="2.0"><channel><title>Example</title>
+		<item><title>Sponsored: buy our widget</title><link>https://example.test/ad</link><description>ignore this</description></item>
+		<item><title>Why Go is great</title><link>https://example.test/go-post</link><description>an ordinary post</description></item>
+	</channel></rss>`
+	client := &fetch.Client{HTTP: &http.Client{Transport: feedTransport(rss)}}
+	service := &Service{Store: db, Client: client, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), DisableAfter: 5}
+	if err := service.PollDue(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ItemIDByURL(ctx, "https://example.test/ad"); err == nil {
+		t.Fatal("the skip rule should have kept the sponsored entry out of the store")
+	}
+	id, err := db.ItemIDByURL(ctx, "https://example.test/go-post")
+	if err != nil {
+		t.Fatal("the non-matching entry should have been inserted:", err)
+	}
+	tags, err := db.ItemTags(ctx, id)
+	if err != nil || len(tags) != 1 || tags[0] != "golang" {
+		t.Fatalf("tags = %v, err=%v, want just [golang]", tags, err)
+	}
+}
+
 func TestAutoSnapshotCreatesSnapshotForNewFeedItem(t *testing.T) {
 	ctx := context.Background()
 	db, err := store.Open(ctx, t.TempDir()+"/items.db")

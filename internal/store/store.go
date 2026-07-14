@@ -52,10 +52,10 @@ func scanItem(rows interface{ Scan(...any) error }) (Item, error) {
 }
 
 type Feed struct {
-	ID                                        int64
-	URL, Title, ETag, LastModified, LastError string
-	RefreshInterval                           time.Duration
-	FetchFullContent, AutoSnapshot, Disabled  bool
+	ID                                               int64
+	URL, Title, ETag, LastModified, LastError, Rules string
+	RefreshInterval                                  time.Duration
+	FetchFullContent, AutoSnapshot, Disabled         bool
 }
 
 type ListOptions struct {
@@ -186,13 +186,20 @@ func (s *Store) AddFeed(ctx context.Context, rawURL string, refresh time.Duratio
 	return id, tx.Commit()
 }
 
-func (s *Store) Feed(ctx context.Context, id int64) (Feed, error) {
+// feedColumns is the shared projection for reading feeds; keep scanFeed
+// aligned with this list (mirrors itemColumns/scanItem for items).
+const feedColumns = `id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled, rules`
+
+func scanFeed(row interface{ Scan(...any) error }) (Feed, error) {
 	var f Feed
 	var seconds, full, snapshot, disabled int
-	err := s.DB.QueryRowContext(ctx, `SELECT id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled FROM feeds WHERE id=?`, id).
-		Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &full, &snapshot, &disabled)
+	err := row.Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &full, &snapshot, &disabled, &f.Rules)
 	f.RefreshInterval, f.FetchFullContent, f.AutoSnapshot, f.Disabled = time.Duration(seconds)*time.Second, full != 0, snapshot != 0, disabled != 0
 	return f, err
+}
+
+func (s *Store) Feed(ctx context.Context, id int64) (Feed, error) {
+	return scanFeed(s.DB.QueryRowContext(ctx, "SELECT "+feedColumns+" FROM feeds WHERE id=?", id))
 }
 
 // SetFeedRefresh updates a feed's polling interval and content options. The
@@ -203,6 +210,13 @@ func (s *Store) SetFeedRefresh(ctx context.Context, id int64, refresh time.Durat
 	}
 	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET refresh_interval_seconds=?, fetch_full_content=?, auto_snapshot=? WHERE id=?",
 		int(refresh.Seconds()), fetchFull, autoSnapshot, id)
+	return err
+}
+
+// SetFeedRules updates a feed's ingest-time skip/tag rules (see the comment
+// on the 006 migration for the line format).
+func (s *Store) SetFeedRules(ctx context.Context, id int64, rules string) error {
+	_, err := s.DB.ExecContext(ctx, "UPDATE feeds SET rules=? WHERE id=?", rules, id)
 	return err
 }
 
@@ -221,7 +235,7 @@ func (s *Store) UpdateFeedURL(ctx context.Context, id int64, url string) error {
 }
 
 func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]Feed, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+feedColumns+`
 		FROM feeds WHERE disabled = 0 AND (last_fetched IS NULL OR datetime(last_fetched, '+' || refresh_interval_seconds || ' seconds') <= datetime(?))`, now.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
@@ -229,13 +243,10 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]Feed, error) {
 	defer rows.Close()
 	var feeds []Feed
 	for rows.Next() {
-		var f Feed
-		var seconds int
-		var fetchFullContent, autoSnapshot, disabled int
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &fetchFullContent, &autoSnapshot, &disabled); err != nil {
+		f, err := scanFeed(rows)
+		if err != nil {
 			return nil, err
 		}
-		f.RefreshInterval, f.FetchFullContent, f.AutoSnapshot, f.Disabled = time.Duration(seconds)*time.Second, fetchFullContent != 0, autoSnapshot != 0, disabled != 0
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()
@@ -328,19 +339,17 @@ func (s *Store) AllItems(ctx context.Context) ([]Item, error) {
 }
 
 func (s *Store) AllFeeds(ctx context.Context) ([]Feed, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT id, url, title, refresh_interval_seconds, COALESCE(etag,''), COALESCE(last_modified,''), COALESCE(last_error,''), fetch_full_content, auto_snapshot, disabled FROM feeds ORDER BY title, url`)
+	rows, err := s.DB.QueryContext(ctx, "SELECT "+feedColumns+" FROM feeds ORDER BY title, url")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var feeds []Feed
 	for rows.Next() {
-		var f Feed
-		var seconds, full, snapshot, disabled int
-		if err := rows.Scan(&f.ID, &f.URL, &f.Title, &seconds, &f.ETag, &f.LastModified, &f.LastError, &full, &snapshot, &disabled); err != nil {
+		f, err := scanFeed(rows)
+		if err != nil {
 			return nil, err
 		}
-		f.RefreshInterval, f.FetchFullContent, f.AutoSnapshot, f.Disabled = time.Duration(seconds)*time.Second, full != 0, snapshot != 0, disabled != 0
 		feeds = append(feeds, f)
 	}
 	return feeds, rows.Err()
