@@ -1,0 +1,10 @@
+{
+  "id": "scrimshaw",
+  "name": "Scrimshaw",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Sync saved items from a self-hosted Scrimshaw instance into your vault, and push read state and highlights back.",
+  "author": "Tiago Jacinto",
+  "authorUrl": "https://github.com/tiagojct/scrimshaw",
+  "isDesktopOnly": false
+}
